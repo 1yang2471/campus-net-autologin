@@ -1,0 +1,25 @@
+
+# Python
+# 本地私密/运行时产物——绝不提交
+*.py[cod]
+.venv/
+__pycache__/
+config.ini
+cookies.pkl
+credentials.json
+keeper.lock
+keeper.log*
+venv/
+dist/
+build/
+*.spec
+pyi.log
+
+# 安全扫描器缓存
+.mimosa/
+
+# 验证截图（含本机内网 IP，不入库）
+shot_*.png
+
+# 构建产物日志
+build_exe.log
