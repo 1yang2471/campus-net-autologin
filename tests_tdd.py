@@ -3175,6 +3175,45 @@ def t38_login_rate_guard_caps_relogin_storm():
 
 check("免认证时段解析与跨午夜", t38_free_window_parse_and_wrap)
 check("免认证时段压制探针并覆盖遗留判死", t38_free_window_suppresses_probe_and_overrides_dead)
+
+
+def t38b_free_window_silences_offline_path_and_freeze():
+    """免认证时段第二课（2026-11-06 00:0x 实测三状态循环）：窗口内 AC ACL
+    变化使锚点探测间歇失败——守护把 anchor 失败当掉线去登录，门户答
+    NOAUTH not taken（登录任务无人接手=门户侧印证此段不受理认证），
+    且「3 连在线自愈」反复解除冻结闸门造成冻结循环。修复后：窗口内
+    一切自动登录禁止（手动可越）、冻结闸门在窗口内不可被自愈解除。"""
+    import keeper as _k
+    import time as _t
+    k = _k.Keeper(_cfg(free_windows="00:00-24:00"))
+    logins = []
+    k.portal_alive = lambda: True
+    k.clash_recover = lambda: None
+    k.do_login = lambda: logins.append(1) or (True, "ok")
+    k._frozen_until = _t.monotonic() + 600.0   # 遗留冻结（门户反暴力闸门）
+    # 阶段1：anchor 挂（免认证常态）→ 离线路径不得登录
+    k.probe_online = lambda: False
+    for _ in range(5):
+        k._last_login_at = 0.0
+        k.tick()
+    assert logins == [], "免认证时段离线路径不得自动登录"
+    assert k._frozen_until > _t.monotonic(), "冻结闸门不得被触碰"
+    # 阶段2：anchor 抖回绿（间歇放行）→ 3 连在线也不得自愈解除冻结
+    k.probe_online = lambda: True
+    k._l2_at = _t.monotonic()
+    k._sess_at = 0.0
+    for _ in range(4):
+        k._last_login_at = 0.0
+        k._l2_at = _t.monotonic()
+        k._sess_at = 0.0
+        k.tick()
+    assert logins == [], "窗口内 3 连在线也不得触发登录"
+    assert k._frozen_until > _t.monotonic(), "窗口内冻结闸门不得被自愈解除"
+    assert k.state == "online" and "免认证" in k.state_detail, \
+        f"窗口内正常探测应显示免认证在线: {k.state!r}/{k.state_detail!r}"
+
+
+check("免认证时段离线路径静默+冻结不自愈", t38b_free_window_silences_offline_path_and_freeze)
 check("自动重登频率熔断（手动不受限）", t38_login_rate_guard_caps_relogin_storm)
 
 print(f"\n结果: PASS={len(PASS)} FAIL={len(FAIL)} SKIP={len(SKIP)}"

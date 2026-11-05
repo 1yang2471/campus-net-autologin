@@ -1269,8 +1269,11 @@ class Keeper:
                 self.set_state("online", detail)  # 网络自愈时也须点亮（审查 P0-4：原缺此句致卡红）
                 # 冻结闸门自愈（2026-11-05 实战）：用户手动登录/网络真恢复后
                 # probe 连续 3 次在线，闸门自动解除，守护不再压着装死。
+                # 免认证时段例外：锚点间歇绿是 ACL 变化常态，凑满 3 连
+                # 会在门户反暴力冻结期内撞墙（2026-11-06 00:0x 实测）。
                 self._probe_online_streak += 1
-                if self._frozen_until and self._probe_online_streak >= 3:
+                if (self._frozen_until and self._probe_online_streak >= 3
+                        and not self._in_free_window()):
                     self._frozen_until = 0.0
                     self.log.info("探测连续 3 次在线，冻结闸门解除")
                 self.reject_until = 0.0
@@ -1314,6 +1317,12 @@ class Keeper:
         # 重登成功 → 1 小时 25+ 次登录触发门户反暴力冻结）。手动重连不受限。
         if not manual and time.monotonic() < self._login_cap_until:
             self.set_state("offline", self._cap_detail)
+            return
+        # 免认证时段第二课（2026-11-06 00:0x 实测）：窗口内 AC ACL 变化使
+        # 锚点探测间歇失败——这不是真掉线，登录必被门户回 NOAUTH（登录
+        # 任务无人接手）并招致反暴力冻结。窗口内一切自动登录禁止。
+        if not manual and self._in_free_window():
+            self.set_state("offline", "免认证时段：不自动登录（网络探测异常）")
             return
         if time.monotonic() < max(self.reject_until, self._frozen_until):
             # 退避期间展示最近被拒原因（原因存 _reject_reason，与状态解耦：
