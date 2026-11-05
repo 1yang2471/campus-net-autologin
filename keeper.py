@@ -724,8 +724,7 @@ class Keeper:
         self._sess_at = 0.0             # 上次会话存活探针时刻
         self._sess_miss = 0             # 连续空表打击计数
         self._session_dead = False      # 会话判死：锚点绿也跳过在线分支（假在线封堵）
-        self._sess_pending = False      # 刚重连成功，待下次探针验证（仍空表=假阳性）
-        self._sess_false = 0            # 「判死→重登说在线→又空表」连续假阳性
+        self._sess_false = 0            # 判死与门户「您已在线」矛盾计数
         self._sess_disabled_until = 0.0 # 探针自停截止（cookie 型门户不适用）
         self.extra_wait = 0.0
         self.state = "starting"
@@ -910,12 +909,13 @@ class Keeper:
     def _probe_session(self) -> None:
         """L3 会话存活（flux 真值）：userflux 按源 IP 认会话——活着返回
         流量表，被踢返回登录页（解析成空表）。封堵 AC「路由通、会话死」
-        假在线（2026-11-05 18:42 实测：游戏流被掐、锚点却全程绿）。
+        假在线（2026-11-05 18:42 实测：游戏流量被掐、锚点却全程绿）。
 
-        防风暴双保险：连续 SESSION_MISS_LIMIT 次空表才判死；判死重连后
-        flux 仍空表（门户实际在线、flux 端点不适配）记一次假阳性，连续
-        SESSION_FALSE_LIMIT 次自停 SESSION_DISABLE_S 秒——见 fetch_flux
-        文档 P-6：cookie 认会话型部署恒空表，探针对其必须会退场。"""
+        防风暴双保险（全为通用机制，不绑定任何学校）：连续
+        SESSION_MISS_LIMIT 次空表才判死；判死后重登若被门户答以
+        「您已在线」（_already_online，ac_portal 族通用语义），说明探针
+        假阳性（cookie 认会话型部署，见 fetch_flux 文档 P-6），矛盾计
+        一次，达 SESSION_FALSE_LIMIT 自停 SESSION_DISABLE_S 秒。"""
         now = time.monotonic()
         if (self._session_dead or now < self._sess_disabled_until
                 or now - self._sess_at < SESSION_PROBE_S):
@@ -929,19 +929,7 @@ class Keeper:
             return  # 门户不可达属离线分支职权，这里不判死
         if flux:
             self._sess_miss = 0
-            self._sess_false = 0
-            self._sess_pending = False
-            return
-        if self._sess_pending:
-            self._sess_pending = False
-            self._sess_false += 1
-            if self._sess_false >= SESSION_FALSE_LIMIT:
-                self._sess_disabled_until = now + SESSION_DISABLE_S
-                self._sess_miss = 0
-                self.log.warning("flux 空表与重登结果连续 %s 次矛盾——该门户可能是 "
-                                 "cookie 认会话型（查流量都正常但 flux 拿不到表），"
-                                 "会话探针停用 %s 秒", self._sess_false,
-                                 int(SESSION_DISABLE_S))
+            self._sess_false = 0    # 拿得到表=门户支持 flux 且会话健康
             return
         self._sess_miss += 1
         if self._sess_miss >= SESSION_MISS_LIMIT:
@@ -1037,13 +1025,18 @@ class Keeper:
                     return True, ""
                 msg = str(data.get("msg") or data.get("message") or "")[:120]
                 if _already_online(msg):
-                    return True, ""
+                    # 哨兵「已在线」保留（trouble-maker e2e 循环37 实证）：
+                    # 会话探针需要区分"新登录成功"与"门户说本来就在线"——
+                    # 归一为空串会让假阳性判定失明。不回传门户原文防学号泄露。
+                    return True, "已在线"
                 return False, msg or "服务器拒绝"
             if "ret_code" in data or "code" in data:
                 code = str(data.get("ret_code", data.get("code", "")))
                 msg = str(data.get("msg") or data.get("message") or "")[:120]
-                if code == "0" or any(w in msg for w in success_marks) or _already_online(msg):
+                if code == "0" or any(w in msg for w in success_marks):
                     return True, ""
+                if _already_online(msg):
+                    return True, "已在线"
                 return False, msg or t[:120]
             return None
 
@@ -1062,7 +1055,7 @@ class Keeper:
             msg_m = re.search(r"'msg'\s*:\s*(['\"])(.*?)\1\s*[,}]", t)
             msg = (msg_m.group(2) if msg_m else "")[:120]
             if _already_online(msg):
-                return True, ""
+                return True, "已在线"    # 哨兵保留，见 _check 注释
             return False, msg or "服务器拒绝"
         # 3) 纯文本标记兜底（trouble-maker P1-9：HTML 门户页里常有"错误提示/
         # onerror"字样，负向词一刀切会把成功页误判成硬拒绝→600 秒最重惩罚。
@@ -1273,12 +1266,21 @@ class Keeper:
             self.set_state("rejected", self._reject_reason or "登录节流中（防风暴）")
             return
         self._last_login_at = time.monotonic()
+        was_dead = self._session_dead      # 本次登录是否由会话探针判死触发
         ok, msg = self.do_login()
         if ok:
-            # 重连成功即解除 flux 判死；下次会话探针验证：若刚重登 flux
-            # 仍空表（门户明明在线）→ 探针假阳性，计入自停额度
+            # 重连成功即解除 flux 判死；门户答「您已在线」而我等探针刚判死
+            # =矛盾实锤（cookie 认会话型部署，flux 恒空但会话真好），计入
+            # 自停额度——通用判据，不针对任何单一学校。
             self._session_dead = False
-            self._sess_pending = True
+            if was_dead and _already_online(msg):
+                self._sess_false += 1
+                if self._sess_false >= SESSION_FALSE_LIMIT:
+                    self._sess_disabled_until = time.monotonic() + SESSION_DISABLE_S
+                    self._sess_miss = 0
+                    self.log.warning("会话探针判死与门户「您已在线」连续 %s 次矛盾"
+                                     "——flux 端点不适配本部署，探针停用 %s 秒",
+                                     self._sess_false, int(SESSION_DISABLE_S))
             # 熔断：连续 3 次"登录成功但下一轮探测仍失败"说明判定链在骗我们，
             # 强制退避，避免每 interval 轰炸 login.php 触发门户风控
             self.suspect += 1

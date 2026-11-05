@@ -1868,6 +1868,14 @@ check("指纹 CLI 异协议明确说不适用", t25_cli_detect_other_protocol)
 print("== 循环26：模拟门户端到端 + 失败现场自诊断 ==")
 
 
+def _close_sim(srv):
+    """关闭模拟门户：shutdown 只停 accept 循环，不关监听套接字——Windows
+    上残留的僵尸监听器会把后续同端口测试的连接拖进死队列（超时误判
+    portal_down，本仓实测串扰事故）。统一走这里，别处不得裸 shutdown。"""
+    srv.shutdown()
+    srv.server_close()
+
+
 def _sim_portal(dialect_body: str, dialect_ok: bool, port: int = 80):
     """本地假门户（127.0.0.1，行为符合 ac_portal 公开规范）：
     未认证时 204 探测被 302 劫持 → 登录页可达 → POST login.php 按方言应答。
@@ -1948,7 +1956,7 @@ def t26_sim_end_to_end_multi_dialect():
             assert any(p.startswith("POST /ac_portal/login.php") for p in seen["paths"]), seen["paths"]
             assert any(p.startswith("GET /generate_204") for p in seen["paths"]), seen["paths"]
         finally:
-            srv.shutdown()
+            _close_sim(srv)
             srv.server_close()
 
 
@@ -1965,7 +1973,7 @@ def t26_sim_variant_rejects_honestly():
         assert k.state == "rejected", f"应诚实进 rejected，实际 {k.state}"
         assert "auth_tag" in (k.state_detail or ""), k.state_detail
     finally:
-        srv.shutdown()
+        _close_sim(srv)
         srv.server_close()
 
 
@@ -2009,7 +2017,7 @@ def t27_server_with_port_end_to_end():
         assert k.state == "online", f"带端口门户应可登录在线，实际 {k.state}"
         assert any(p.startswith("POST /ac_portal/login.php") for p in seen["paths"]), seen["paths"]
     finally:
-        srv.shutdown()
+        _close_sim(srv)
         srv.server_close()
 
 
@@ -2901,6 +2909,178 @@ def t36_flux_probe_false_alarm_backoff():
 check("DPI 窗口上浮面板/托盘", t36_dpi_window_surfaced)
 check("flux 真值封堵假在线", t36_fake_online_reconnects_via_flux_ground_truth)
 check("flux 探针假阳性自动停用", t36_flux_probe_false_alarm_backoff)
+
+print("== 循环37：AC「路由通、会话死」通用行为族 e2e（汕大 2026-11-05 观察实例）==")
+
+
+def _sim_ac_split(port: int = 80):
+    """「路由与会话分离」型 AC 的通用模拟门户——这不是某校特例，是 AC 系
+    设备的普遍行为族（踢会话不掐路由；汕大 18:42 现场观察到第一例）：
+    - GET /generate_204 恒 204：AC 掐会话从不掐路由（锚点全程被欺骗，
+      2026-11-05 18:42 实锤：游戏流被掐、守护锚点绿）
+    - POST userflux：会话活→流量表；死/不适配→登录页（flux 真值）
+    - POST login.php：block_proxy（=加速器开着被行为管理识别）→ 硬拒；
+      flux_unsupported 门户返回「您已在线」；否则成功并复活会话
+    state 三个开关即三种加速器/部署情况。端口占用返回 None（SKIP）。"""
+    import http.server
+    import threading
+    seen = {"logins": []}
+    state = {"session_alive": False, "block_proxy": False,
+             "flux_unsupported": False}
+    TABLE = (b"<table><tr><td>\xe7\x94\xa8\xe6\x88\xb7\xe5\x90\x8d\xe7\xa7\xb0\xef\xbc\x9a"
+             b"</td><td>stu001</td></tr><tr><td>\xe6\x97\xa5\xe6\xb5\x81\xe9\x87\x8f"
+             b"\xe9\xa2\x9d\xef\xbc\x9a</td><td>10G</td></tr></table>")
+    LOGIN_PAGE = b"<html>ac_portal pwdLogin</html>"
+
+    class H(http.server.BaseHTTPRequestHandler):
+        def log_message(self, *a):
+            pass
+
+        def _reply(self, code, body=b"", headers=None):
+            self.send_response(code)
+            for k, v in (headers or {}).items():
+                self.send_header(k, v)
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            if body:
+                self.wfile.write(body)
+
+        def do_GET(self):
+            if self.path.startswith("/generate_204"):
+                self._reply(204)          # 路由永不掐——这正是失明点
+            elif self.path.startswith("/ac_portal"):
+                self._reply(200, LOGIN_PAGE)
+            else:
+                self._reply(404, b"")
+
+        def do_POST(self):
+            n = int(self.headers.get("Content-Length", 0) or 0)
+            if n:
+                self.rfile.read(n)
+            if self.path.startswith("/ac_portal/userflux"):
+                if state["flux_unsupported"] or not state["session_alive"]:
+                    self._reply(200, LOGIN_PAGE)   # 空表=会话死/不适配
+                else:
+                    self._reply(200, TABLE)
+            elif self.path.startswith("/ac_portal/login.php"):
+                seen["logins"].append(1)
+                if state["block_proxy"]:
+                    self._reply(200, "{'success':false,'msg':'检测到使用代理软件，"
+                                     "请停止使用后重新登录'}".encode("utf-8"))
+                elif state["flux_unsupported"]:
+                    self._reply(200, "{'success':false,'msg':'您已在线'}"
+                                .encode("utf-8"))  # 会话其实活着
+                else:
+                    state["session_alive"] = True
+                    self._reply(200, "{'success':true,'msg':'登录成功'}"
+                                .encode("utf-8"))
+            else:
+                self._reply(404, b"")
+    try:
+        srv = http.server.ThreadingHTTPServer(("127.0.0.1", port), H)
+    except OSError:
+        return None
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    return srv, seen, state
+
+
+def t37_fake_online_e2e():
+    """假在线端到端（AC 通用踢法复刻，汕大 18:42 首例观察）：路由恒绿 +
+    会话被掐 → 真实 Keeper 经真实 HTTP 用 flux 真值在 2 次空表内判死，
+    同拍重登复活，全程恰好 1 次登录（无风暴）。锚点视角从头到尾都是
+    "在线"——单信号守护正是在这类部署上失明。"""
+    import keeper as _k
+    sim = _sim_ac_split()
+    if sim is None:
+        raise _Skip("127.0.0.1:80 被占用/无权限，端到端跳过（零副作用承诺）")
+    srv, seen, state = sim
+    old_probe_s = _k.SESSION_PROBE_S
+    try:
+        _k.SESSION_PROBE_S = 0.0            # 加速探针周期（等价生产 60s）
+        k = _k.Keeper(_sim_cfg())
+        k.tick()                            # 初始会话死：空表×1 防抖不翻转
+        assert k.state == "online" and not state["session_alive"]
+        k._last_login_at = 0.0
+        k.tick()                            # 空表×2 → 判死 → 首登复活
+        assert state["session_alive"] and k.state == "online"
+        n0 = len(seen["logins"])
+        state["session_alive"] = False      # AC 踢会话，路由不掐
+        k.tick()                            # 空表×1 → 防抖不翻转
+        assert k.state == "online", "单次空表不得翻转（防抖）"
+        k._last_login_at = 0.0
+        k.tick()                            # 空表×2 → 判死 + 同拍重连
+        assert k.state == "online" and state["session_alive"] is True, \
+            "flux 真值须在第二次空表就抓住假在线并自动重连"
+        assert len(seen["logins"]) - n0 == 1, "恢复应恰好一次登录（无风暴）"
+    finally:
+        _k.SESSION_PROBE_S = old_probe_s
+        _close_sim(srv)
+
+
+def t37_accelerator_kick_bounded_then_recovers():
+    """开加速器过夜（行为管理识别踢线，多所高校官方文档明令禁止代理）：
+    AC 按行为特征踢会话，重登被「检测到使用代理软件」类硬拒 → 守护退避
+    600 秒、期间探测再多也不再轰 login.php；用户关掉加速器后一键恢复。"""
+    import keeper as _k
+    sim = _sim_ac_split()
+    if sim is None:
+        raise _Skip("127.0.0.1:80 被占用/无权限，端到端跳过（零副作用承诺）")
+    srv, seen, state = sim
+    old_probe_s = _k.SESSION_PROBE_S
+    try:
+        _k.SESSION_PROBE_S = 0.0
+        k = _k.Keeper(_sim_cfg())
+        state["block_proxy"] = True         # 加速器开着：AC 行为识别
+        state["session_alive"] = False      # 已被踢
+        k.tick(); k._last_login_at = 0.0
+        k.tick()                            # 判死 → login → 代理硬拒
+        assert k.state == "rejected", k.state
+        n_after_reject = len(seen["logins"])
+        for _ in range(10):                 # 退避窗口内继续周期探测
+            k._sess_at = 0.0
+            k.tick()
+        assert len(seen["logins"]) == n_after_reject, \
+            "硬拒退避期间不得再轰登录（风暴防线）"
+        state["block_proxy"] = False        # 用户关掉加速器
+        k.request_reconnect()               # 点「立即检测重连」
+        k._last_login_at = 0.0              # 全局30s节流由循环30单独守，此处加速
+        k.tick(manual=True)
+        assert k.state == "online" and state["session_alive"], "关掉后一键恢复"
+    finally:
+        _k.SESSION_PROBE_S = old_probe_s
+        _close_sim(srv)
+
+
+def t37_cookie_portal_probe_self_disables_e2e():
+    """cookie 认会话型门户（异校通用性边界）：会话明明在线但 flux 恒空表
+    → 判死→重登说「您已在线」→又空表，矛盾累计后探针自动停用；
+    总登录次数有界（≤3），最终状态在线——绝不对着好会话无限重登。"""
+    import keeper as _k
+    sim = _sim_ac_split()
+    if sim is None:
+        raise _Skip("127.0.0.1:80 被占用/无权限，端到端跳过（零副作用承诺）")
+    srv, seen, state = sim
+    old_probe_s = _k.SESSION_PROBE_S
+    try:
+        _k.SESSION_PROBE_S = 0.0
+        state["flux_unsupported"] = True    # 门户恒空表
+        state["session_alive"] = True       # 会话其实一直好
+        k = _k.Keeper(_sim_cfg())
+        for _ in range(12):
+            k._last_login_at = 0.0
+            k.tick()
+        assert len(seen["logins"]) <= 3, \
+            f"cookie 型门户登录必须收敛（实际 {len(seen['logins'])}）"
+        assert k._sess_disabled_until > 0.0, "3 次矛盾后探针须自停"
+        assert k.state == "online", "自停后正常凭锚点在线"
+    finally:
+        _k.SESSION_PROBE_S = old_probe_s
+        _close_sim(srv)
+
+
+check("假在线端到端（路由通会话死族）", t37_fake_online_e2e)
+check("加速器踢线：硬拒退避防风暴+关后恢复", t37_accelerator_kick_bounded_then_recovers)
+check("cookie门户探针自停（登录收敛≤3）", t37_cookie_portal_probe_self_disables_e2e)
 
 print(f"\n结果: PASS={len(PASS)} FAIL={len(FAIL)} SKIP={len(SKIP)}"
       + ("（真实门户项未启用）" if not LIVE and SKIP else ""))
