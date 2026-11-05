@@ -2689,6 +2689,37 @@ check("快照透传 paused", t32_facade_snapshot_maps_paused)
 check("面板历史切换+自动重连勾选", t32_shell_switch_and_toggle)
 check("paused 颜色跨层同步", t32_tray_panel_paused_colors_in_sync)
 
+def t32_ssl_combobox_echoes_value():
+    """readonly Combobox 回显回归锁：set() 才有效——delete+insert 被 readonly
+    校验静默拒绝（用户实测"证书校验"永远空白，v1.0.2 既有缺陷）。"""
+    from shell.app import Shell
+
+    class K:
+        needs_setup = False
+        def snapshot(self):
+            return {"state": "online", "detail": "", "interval": 3,
+                    "reject_remaining": 0}
+        def get_settings(self): return {"ssl_verify": "false"}
+        def fetch_flux(self): return {}
+        def force_reconnect(self): ...
+        def on_change(self, cb): ...
+        def save_credentials(self, *a): ...
+        def switch_account(self, u): return True, "ok"
+        def test_credentials(self, *a): return True, "ok"
+        def detect_portal(self): return ""
+        def save_settings(self, v): ...
+
+    win = Shell(K())
+    try:
+        win.update()
+        assert win.e_ssl.get() == "false", \
+            f"证书校验回显丢失: {win.e_ssl.get()!r}"
+    finally:
+        win.destroy()
+
+
+check("证书校验回显（readonly set 语义）", t32_ssl_combobox_echoes_value)
+
 print(f"\n结果: PASS={len(PASS)} FAIL={len(FAIL)} SKIP={len(SKIP)}"
       + ("（真实门户项未启用）" if not LIVE and SKIP else ""))
 sys.exit(1 if FAIL else 0)

@@ -287,10 +287,14 @@ class Shell(tk.Tk):
             e.insert(0, str(cfg.get(key, "")))
         for _key, attr, _num in self._SETTING_FIELDS:
             e = getattr(self, attr)
+            if isinstance(e, ttk.Combobox):
+                # readonly Combobox 程序写入只能用 set()：实测 delete 不生效、
+                # insert 被 readonly 校验拒绝（v1.0.2 起"证书校验"回显恒空的根因）
+                e.set("true" if str(cfg.get(_key, "false")).lower() == "true"
+                      else "false")
+                continue
             e.delete(0, "end")
-            val = str(cfg.get(_key, "")) if not isinstance(e, ttk.Combobox) else \
-                ("true" if str(cfg.get(_key, "false")).lower() == "true" else "false")
-            e.insert(0, val)
+            e.insert(0, str(cfg.get(_key, "")))
         self._auto_on = str(cfg.get("auto_reconnect", "true")).lower() == "true"
         self._render_auto()
         # 历史账号下拉（免打字）：密码走 keyring 恢复，选中即切（见

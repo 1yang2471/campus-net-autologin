@@ -54,13 +54,16 @@ def apply_dark_ttk(root) -> None:
         st.theme_use("clam")
     except tk.TclError:
         pass
+    # borderwidth=1：clam 默认 2px 斜角边框的四角像素不跟随 bordercolor/
+    # lightcolor/darkcolor，回落主题默认亮灰 → 输入框四角白点（用户实测，
+    # A/B 像素取证：bw2 角 (142,143,145) vs bw1 边 (41,41,42)≈PANEL_EDGE）
     st.configure("TEntry", fieldbackground=PANEL, foreground=FG,
                  insertcolor=FG, bordercolor=PANEL_EDGE, lightcolor=PANEL,
-                 darkcolor=PANEL)
+                 darkcolor=PANEL, borderwidth=1)
     st.configure("TCombobox", fieldbackground=PANEL, background=PANEL,
                  foreground=FG, arrowcolor=FG, selectbackground=PANEL,
                  selectforeground=FG, bordercolor=PANEL_EDGE,
-                 lightcolor=PANEL, darkcolor=PANEL)
+                 lightcolor=PANEL, darkcolor=PANEL, borderwidth=1)
     st.map("TCombobox", fieldbackground=[("readonly", PANEL)],
            foreground=[("readonly", FG)])
     st.configure("TScrollbar", background="#3a4048", troughcolor=PANEL,

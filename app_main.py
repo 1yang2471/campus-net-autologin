@@ -296,6 +296,10 @@ def main() -> None:
     for _ in range(3):
         cfg, ready = _effective_config()
         if ready:
+            # 启动即播种历史：当前账号永远出现在面板「历史账号」下拉
+            # （升级上来的用户没有再走保存流程，不播种列表就是空的）
+            from shell.accounts import remember_account
+            remember_account(cfg.get("username", ""), cfg.get("server", ""))
             break
         if sys.stdin and sys.stdin.isatty():
             cfg = ensure_config(cfg)
