@@ -44,22 +44,19 @@ k.form = {**m.FORM_BASE, "userName": "u", "pwd": "p", **m.load_form_extras()}
 assert k.form["opr"] == "pwdLogin" and k.form["userName"] == "u"
 
 # 5) 熔断状态机：probe 恒失败 + login 恒成功 → 3 轮后必须进入退避而非继续登录
+# （用真 __init__ 构造：__new__ 手工装配清单在 2026-11-05 已四次漏字段
+#  [auto_reconnect/_session_dead 系/_login_cap_until 系/free_windows]，
+#  结构性脆弱——真构造 + 只 stub 行为，字段遗漏从此不可能）
 import time as _t
-k2 = m.Keeper.__new__(m.Keeper)
-k2.cfg = dict(m.DEFAULTS)
-k2.log = m.logging.getLogger("smoke")
-k2.state = "starting"; k2.state_detail = ""
-k2.on_state = None; k2.state_listeners = []
-k2.interval = 3.0; k2.probe_timeout = 3.0
-k2.reject_backoff = 600.0; k2.portal_down_wait = 30.0
-k2.transient_backoff = 30.0
-k2.reject_until = 0.0; k2.suspect = 0; k2.transient_streak = 0; k2.extra_wait = 0.0
-k2.auto_reconnect = True   # tick 派生属性（__new__ 绕过 _derive_runtime，须手动装配）
-k2._frozen_until = 0.0   # 门户限频冻结闸门（__new__ 手工装配须同步，2026-11-05）
-k2._last_login_at = 0.0; k2._probe_online_streak = 0; k2._reject_reason = ""
-k2._l2_window_until = 0.0; k2._sess_at = 0.0; k2._sess_miss = 0
-k2._session_dead = False
-k2._sess_false = 0; k2._sess_disabled_until = 0.0
+
+
+def _smoke_keeper():
+    return m.Keeper(dict(m.DEFAULTS, username="u", password="p",
+                         bind_ip="127.0.0.1",
+                         server="https://portal.example.edu"))
+
+
+k2 = _smoke_keeper()
 k2.portal_alive = lambda: True
 k2.probe_online = lambda: False
 login_calls = []
@@ -75,19 +72,7 @@ assert len(login_calls) == 3, f"5 轮里只应登录 3 次后熔断，实际 {le
 assert k2.state == "rejected" and k2.reject_until > _t.monotonic()
 
 # 6) 瞬态拒绝（NOAUTH 竞态，2026-11-04 02:11 实测）：短退避；连续 5 次升级长退避防风暴
-k3 = m.Keeper.__new__(m.Keeper)
-k3.cfg = dict(m.DEFAULTS)
-k3.log = m.logging.getLogger("smoke")
-k3.state = "starting"; k3.state_detail = ""; k3.on_state = None; k3.state_listeners = []
-k3.interval = 3.0; k3.probe_timeout = 3.0
-k3.reject_backoff = 600.0; k3.transient_backoff = 30.0; k3.portal_down_wait = 30.0
-k3.reject_until = 0.0; k3.suspect = 0; k3.transient_streak = 0; k3.extra_wait = 0.0
-k3.auto_reconnect = True   # tick 派生属性（__new__ 绕过 _derive_runtime，须手动装配）
-k3._frozen_until = 0.0   # 同上：__new__ 手工装配须同步
-k3._last_login_at = 0.0; k3._probe_online_streak = 0; k3._reject_reason = ""
-k3._l2_window_until = 0.0; k3._sess_at = 0.0; k3._sess_miss = 0
-k3._session_dead = False
-k3._sess_false = 0; k3._sess_disabled_until = 0.0
+k3 = _smoke_keeper()
 k3.probe_online = lambda: False
 k3.portal_alive = lambda: True
 k3.do_login = lambda: (False, "Task 'NOAUTH:*' not taken")

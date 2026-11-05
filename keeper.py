@@ -71,6 +71,7 @@ DEFAULTS = {
     "login_timeout": "0",  # 0 = 自适应 max(6, 2×probe_timeout)（P1-7）
     "interval": "3",
     "auto_reconnect": "true",  # false = 只探测报状态，不自动登录（面板可开关）
+    "free_windows": "",        # 免认证时段（如 23:30-06:30）：网络无需登录，窗口内不判死不自动重登
     "reject_backoff": "600",
     "transient_backoff": "30",
     "portal_down_wait": "30",
@@ -702,6 +703,10 @@ class Keeper:
     # 但也会绕过所有退避立即重登——2026-11-05 02:44-02:50 风暴实测根因。
     # 无论退避怎么抖，两次登录尝试至少间隔 30 秒。
     LOGIN_MIN_INTERVAL = 30.0
+    # 自动重登频率熔断（2026-11-05 夜实测：门户反复踢线 + 守护每次都重登
+    # 成功 → 1 小时 25+ 次登录触发门户反暴力冻结 600s）。手动重连不受限。
+    LOGIN_OK_CAP = 8            # 1 小时内自动重登成功次数上限
+    LOGIN_CAP_S = 3600.0        # 触发上限后的自动重登熔断时长
 
     def __init__(self, cfg: dict) -> None:
         self.cfg = cfg
@@ -726,6 +731,9 @@ class Keeper:
         self._session_dead = False      # 会话判死：锚点绿也跳过在线分支（假在线封堵）
         self._sess_false = 0            # 判死与门户「您已在线」矛盾计数
         self._sess_disabled_until = 0.0 # 探针自停截止（cookie 型门户不适用）
+        self._login_ok_times: list[float] = []  # 自动重登成功时刻（频率熔断窗口）
+        self._login_cap_until = 0.0     # 自动重登熔断截止（0=未熔断）
+        self._cap_detail = ""
         self.extra_wait = 0.0
         self.state = "starting"
         self.state_detail = ""
@@ -774,6 +782,27 @@ class Keeper:
             _lt = 0.0
         self.login_timeout = clamp(_lt, 6, 60, "login_timeout") if _lt \
             else max(6.0, 2 * self.probe_timeout)
+        # 免认证时段（如 23:30-06:30，多校通用的通用机制）：该时段网络无需
+        # 认证、门户不维护会话——flux 空表是常态而非踢线证据，窗口内不判死
+        # 不自动登录（2026-11-05 夜实测：守护不知道免认证时段，整夜刷登录
+        # 撞门户反暴力冻结）
+        self.free_windows: list[tuple[int, int]] = []
+        for seg in str(cfg.get("free_windows", "")).split(","):
+            seg = seg.strip()
+            if not seg:
+                continue
+            try:
+                a, b = seg.split("-")
+                ah, am = a.strip().split(":")
+                bh, bm = b.strip().split(":")
+                start, end = int(ah) * 60 + int(am), int(bh) * 60 + int(bm)
+                if not (0 <= start < 24 * 60 and 0 <= end <= 24 * 60):
+                    raise ValueError
+            except ValueError:
+                self.log.warning("free_windows 项 %r 无法解析（应为 HH:MM-HH:MM），"
+                                 "已跳过", seg)
+                continue
+            self.free_windows.append((start, end))
 
     def apply_config(self, cfg: dict) -> None:
         """设置页热重载（保存即生效）：重新推导运行时参数、失效门户 DNS
@@ -916,6 +945,12 @@ class Keeper:
         「您已在线」（_already_online，ac_portal 族通用语义），说明探针
         假阳性（cookie 认会话型部署，见 fetch_flux 文档 P-6），矛盾计
         一次，达 SESSION_FALSE_LIMIT 自停 SESSION_DISABLE_S 秒。"""
+        if self._in_free_window():
+            # 免认证时段：门户不维护会话/不受理登录，flux 空表是常态而非
+            # 踢线证据——顺带清掉窗口开启前遗留的判死（否则窗口内每个 tick
+            # 都会去撞门户的冻结墙，2026-11-05 23:32 实测冻结 600s）
+            self._session_dead = False
+            return
         now = time.monotonic()
         if (self._session_dead or now < self._sess_disabled_until
                 or now - self._sess_at < SESSION_PROBE_S):
@@ -1159,6 +1194,8 @@ class Keeper:
 
     def describe_state(self) -> str:
         if self.state == "online":
+            if self._in_free_window():
+                return "在线（免认证时段）"
             if time.monotonic() < self._l2_window_until:
                 return "在线（DPI 风控窗口：认证正常，勿重登）"
             return "在线"
@@ -1185,6 +1222,21 @@ class Keeper:
         self._manual_pending = manual
         self.force_evt.set()
 
+    def _in_free_window(self, minutes: int | None = None) -> bool:
+        """当前（或给定）时刻是否在免认证时段内；未配置恒 False（行为不变）。"""
+        if not self.free_windows:
+            return False
+        if minutes is None:
+            lt = time.localtime()
+            minutes = lt.tm_hour * 60 + lt.tm_min
+        for start, end in self.free_windows:
+            if start <= end:
+                if start <= minutes < end:
+                    return True
+            elif minutes >= start or minutes < end:   # 跨午夜（23:30-06:30）
+                return True
+        return False
+
     def tick(self, manual: bool = False) -> None:
         """一次探测周期：三层判定 + L2 策略层观察 + L3 会话真值 + 按需登录
         + 登录风暴熔断。
@@ -1203,16 +1255,18 @@ class Keeper:
                                          if self.probe_l2_restricted() else 0.0)
             # L1 通 ≠ 认证在线：flux 真值盖章后才点亮（_probe_session 详注）
             self._probe_session()
-            if self._session_dead:
+            if self._session_dead and not self._in_free_window():
                 # 假在线：锚点全绿但会话已被门户掐断（游戏/长连接实测已掉）
                 # ——不当在线，继续往下走掉线重连流程（判死日志已由
                 # _probe_session 打过，这里每 tick 静默 fall through）
                 pass
             else:
-                self.set_state("online",
-                               "DPI 风控窗口：网页打不开勿重登（认证正常）"
-                               if time.monotonic() < self._l2_window_until
-                               else "")  # 网络自愈时也须点亮（审查 P0-4：原缺此句致卡红）
+                detail = ""
+                if self._in_free_window():
+                    detail = "免认证时段（无需登录）"
+                elif time.monotonic() < self._l2_window_until:
+                    detail = "DPI 风控窗口：网页打不开勿重登（认证正常）"
+                self.set_state("online", detail)  # 网络自愈时也须点亮（审查 P0-4：原缺此句致卡红）
                 # 冻结闸门自愈（2026-11-05 实战）：用户手动登录/网络真恢复后
                 # probe 连续 3 次在线，闸门自动解除，守护不再压着装死。
                 self._probe_online_streak += 1
@@ -1256,6 +1310,11 @@ class Keeper:
         if not manual and not self.auto_reconnect:
             self.set_state("paused", self._reject_reason or "自动重连已关闭")
             return
+        # 自动重登频率熔断（2026-11-05 夜实测：门户反复踢线 + 守护每次都
+        # 重登成功 → 1 小时 25+ 次登录触发门户反暴力冻结）。手动重连不受限。
+        if not manual and time.monotonic() < self._login_cap_until:
+            self.set_state("offline", self._cap_detail)
+            return
         if time.monotonic() < max(self.reject_until, self._frozen_until):
             # 退避期间展示最近被拒原因（原因存 _reject_reason，与状态解耦：
             # portal_down 等迁移不会再把它抹空，P1-8 原意真正落地）
@@ -1269,6 +1328,25 @@ class Keeper:
         was_dead = self._session_dead      # 本次登录是否由会话探针判死触发
         ok, msg = self.do_login()
         if ok:
+            # 自动重登频率熔断：1 小时内成功重登达上限 = 门户在反复踢线
+            # （加速器行为管理/flux 劣化），继续登只会撞反暴力冻结——暂停
+            # 一小时并如实显示，手动「立即检测重连」随时可越（用户显式意图）。
+            if not manual:
+                now = time.monotonic()
+                self._login_ok_times.append(now)
+                self._login_ok_times = [t for t in self._login_ok_times
+                                        if now - t < self.LOGIN_CAP_S]
+                if len(self._login_ok_times) >= self.LOGIN_OK_CAP:
+                    lt = time.localtime(time.time() + self.LOGIN_CAP_S)
+                    self._cap_detail = (f"门户在反复踢线，自动重登暂停至 "
+                                        f"{lt.tm_hour:02d}:{lt.tm_min:02d}（可手动重连）")
+                    self._login_cap_until = now + self.LOGIN_CAP_S
+                    self._login_ok_times = []
+                    self.log.warning("1 小时内自动重登成功 %s 次——门户可能在反复踢线"
+                                     "（如加速器被行为管理识别）或 flux 端点劣化，"
+                                     "自动重登暂停 1 小时", self.LOGIN_OK_CAP)
+                    self.set_state("offline", self._cap_detail)
+                    return
             # 重连成功即解除 flux 判死；门户答「您已在线」而我等探针刚判死
             # =矛盾实锤（cookie 认会话型部署，flux 恒空但会话真好），计入
             # 自停额度——通用判据，不针对任何单一学校。

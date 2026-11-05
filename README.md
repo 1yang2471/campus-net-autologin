@@ -104,6 +104,7 @@ probe_timeout = 3                    # 探测超时秒数（1~15）
 login_timeout = 0                    # 登录超时秒数；0=自适应 max(6, 2×probe_timeout)，慢门户可调大
 interval = 3                         # 探测周期秒数（钳制 1~300）
 auto_reconnect = true                # false=只探测报状态、掉线不自动登录（面板"掉线自动重连"开关；"立即检测重连"按钮仍可单次手动触发）
+free_windows =                       # 免认证时段（如 23:30-06:30，逗号分隔多段）：该时段网络无需登录，守护不判死不自动重登，面板显示"免认证时段"
 reject_backoff = 600                 # 硬错误（密码/额度）退避秒数（60~86400）
 transient_backoff = 30               # 瞬态错误（时段切换竞态）短退避（5~600）
 portal_down_wait = 30                # 认证服务器不可达时等待秒数（5~600）

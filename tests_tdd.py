@@ -3082,6 +3082,101 @@ check("假在线端到端（路由通会话死族）", t37_fake_online_e2e)
 check("加速器踢线：硬拒退避防风暴+关后恢复", t37_accelerator_kick_bounded_then_recovers)
 check("cookie门户探针自停（登录收敛≤3）", t37_cookie_portal_probe_self_disables_e2e)
 
+
+def t38_free_window_parse_and_wrap():
+    """免认证时段配置解析（通用机制，非某校特例）：跨午夜窗口
+    「23:30-06:30」在 23:45/06:00 命中、12:00 不命中；非法项跳过不崩。"""
+    import keeper as _k
+    k = _k.Keeper(_cfg(free_windows="23:30-06:30,12:00-12:30"))
+    assert k._in_free_window(23 * 60 + 45) is True    # 23:45 跨午夜前段
+    assert k._in_free_window(6 * 60) is True          # 06:00 跨午夜后段
+    assert k._in_free_window(12 * 60 + 10) is True    # 午休窗口
+    assert k._in_free_window(12 * 60 + 40) is False   # 窗口外
+    assert _k.Keeper(_cfg())._in_free_window(23 * 60 + 45) is False, \
+        "缺省（未配置）必须永不命中——异校零改动行为不变"
+    bad = _k.Keeper(_cfg(free_windows="abc,25:00-99:99,01:00-02:00"))
+    assert bad._in_free_window(1 * 60 + 30) is True, "合法项须保留"
+    assert bad._in_free_window(12 * 60) is False, "非法项须跳过且不致命"
+
+
+def t38_free_window_suppresses_probe_and_overrides_dead():
+    """免认证时段（用户口述：23:30 后无需登录）：门户不维护会话，flux 空表
+    是常态而非踢线证据——窗口内不得判死、不得登录、状态显示免认证；
+    窗口开启前遗留的判死标记必须被覆盖（否则 23:31 起每 tick 都去撞
+    门户的冻结墙——今晚 23:32 冻结 600s 的直接机制）。"""
+    import keeper as _k
+    import time as _t
+    k = _k.Keeper(_cfg(free_windows="00:00-24:00"))   # 全天窗口=测试任意时刻命中
+    k.probe_online = lambda: True
+    k.probe_l2_restricted = lambda: False
+    k.fetch_flux = lambda: {}                          # 免认证时段：恒空表
+    k._l2_at = _t.monotonic()
+    k._session_dead = True                             # 窗口前遗留的判死
+    logins = []
+    k.do_login = lambda: logins.append(1) or (True, "ok")
+    k.clash_recover = lambda: None
+    k._sess_at = 0.0
+    k.tick()
+    assert logins == [], "免认证时段不得自动登录"
+    assert k._session_dead is False, "遗留判死必须被窗口覆盖清除"
+    assert k.state == "online" and "免认证" in k.state_detail, \
+        f"状态须显示免认证时段: {k.state!r}/{k.state_detail!r}"
+    k._sess_at = 0.0
+    k.tick()
+    assert logins == [] and k.state == "online", "窗口内持续静默"
+
+
+def t38_login_rate_guard_caps_relogin_storm():
+    """自动重登频率熔断（今晚 25+ 次重登触发门户反暴力冻结的防线）：会话
+    被反复踢线时（每次重登后 flux 只活一拍又空），1 小时内第 LOGIN_CAP
+    次成功登录后停止自动重登并留状态说明；手动「立即检测重连」不受限。"""
+    import keeper as _k
+    import time as _t
+    k = _k.Keeper(_cfg())
+    k.probe_online = lambda: True
+    k.probe_l2_restricted = lambda: False
+    k.portal_alive = lambda: True
+    k.clash_recover = lambda: None
+    box = {"alive_once": False, "logins": 0}
+
+    def flux():
+        # 复刻"AC 反复踢线"：重登成功后 flux 只活一拍，随后又空
+        if box["alive_once"]:
+            box["alive_once"] = False
+            return {"用户名称": "u"}
+        return {}
+    k.fetch_flux = flux
+
+    def login():
+        box["logins"] += 1
+        box["alive_once"] = True       # 重登确实恢复了会话
+        return True, "登录成功"
+    k.do_login = login
+    for _ in range(60):
+        k._sess_at = 0.0
+        k._last_login_at = 0.0
+        k._l2_at = _t.monotonic()
+        k.tick()
+        if k._login_cap_until > 0.0:
+            break
+    n_auto = box["logins"]
+    assert n_auto == k.LOGIN_OK_CAP, \
+        f"频率熔断应在第 {k.LOGIN_OK_CAP} 次成功登录触发，实际 {n_auto}"
+    assert _t.monotonic() < k._login_cap_until, "熔断须生效"
+    for _ in range(10):
+        k._sess_at = 0.0
+        k._l2_at = _t.monotonic()
+        k.tick()
+    assert box["logins"] == n_auto, "熔断期内不得再自动登录"
+    k._last_login_at = 0.0              # 30s 全局节流由循环30单独守，此处加速
+    k.tick(manual=True)                # 手动不受限
+    assert box["logins"] == n_auto + 1, "手动重连须绕过熔断"
+
+
+check("免认证时段解析与跨午夜", t38_free_window_parse_and_wrap)
+check("免认证时段压制探针并覆盖遗留判死", t38_free_window_suppresses_probe_and_overrides_dead)
+check("自动重登频率熔断（手动不受限）", t38_login_rate_guard_caps_relogin_storm)
+
 print(f"\n结果: PASS={len(PASS)} FAIL={len(FAIL)} SKIP={len(SKIP)}"
       + ("（真实门户项未启用）" if not LIVE and SKIP else ""))
 sys.exit(1 if FAIL else 0)

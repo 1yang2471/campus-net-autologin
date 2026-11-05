@@ -11,7 +11,7 @@ from typing import Callable, Protocol
 # 状态快照：外壳渲染所需的全部信息（只读）
 STATE_LABELS = {
     "online": "在线",
-    "offline": "离线，自动重连中",
+    "offline": "离线",
     "portal_down": "认证服务器不可达",
     "rejected": "登录被拒",
     "paused": "自动重连已关闭",
