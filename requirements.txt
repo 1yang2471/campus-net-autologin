@@ -1,0 +1,5 @@
+requests>=2.28
+pystray>=0.19.5
+Pillow>=9.0
+keyring>=24
+psutil>=5.9
