@@ -73,3 +73,13 @@ def apply_dark_ttk(root) -> None:
                  bordercolor=PANEL, lightcolor=PANEL, darkcolor=PANEL,
                  arrowcolor=FG_DIM, arrowsize=12, borderwidth=1)
     st.map("TScrollbar", background=[("active", "#4a525c")])
+    # Combobox 下拉弹出层：clam 的 popdown 是原生 Listbox（toplevel 类名
+    # TComb），不吃 ttk 样式——不压它就是点开下拉弹出一块白板（白点审查
+    # 发现的最后亮底残留）。option_add 按类名匹配，对之后创建的
+    # 同类控件生效（含 popdown），必须样式配置之后、控件创建之前。
+    root.option_add("*TComb*listbox*background", PANEL)
+    root.option_add("*TComb*listbox*foreground", FG)
+    root.option_add("*TComb*listbox*selectbackground", PANEL_EDGE)
+    root.option_add("*TComb*listbox*selectforeground", FG)
+    root.option_add("*TComb*listbox*borderWidth", 0)
+    root.option_add("*TComb*listbox*highlightThickness", 0)

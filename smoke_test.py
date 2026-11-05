@@ -57,6 +57,9 @@ k2.reject_until = 0.0; k2.suspect = 0; k2.transient_streak = 0; k2.extra_wait = 
 k2.auto_reconnect = True   # tick 派生属性（__new__ 绕过 _derive_runtime，须手动装配）
 k2._frozen_until = 0.0   # 门户限频冻结闸门（__new__ 手工装配须同步，2026-11-05）
 k2._last_login_at = 0.0; k2._probe_online_streak = 0; k2._reject_reason = ""
+k2._l2_window_until = 0.0; k2._sess_at = 0.0; k2._sess_miss = 0
+k2._session_dead = False; k2._sess_pending = False
+k2._sess_false = 0; k2._sess_disabled_until = 0.0
 k2.portal_alive = lambda: True
 k2.probe_online = lambda: False
 login_calls = []
@@ -82,6 +85,9 @@ k3.reject_until = 0.0; k3.suspect = 0; k3.transient_streak = 0; k3.extra_wait = 
 k3.auto_reconnect = True   # tick 派生属性（__new__ 绕过 _derive_runtime，须手动装配）
 k3._frozen_until = 0.0   # 同上：__new__ 手工装配须同步
 k3._last_login_at = 0.0; k3._probe_online_streak = 0; k3._reject_reason = ""
+k3._l2_window_until = 0.0; k3._sess_at = 0.0; k3._sess_miss = 0
+k3._session_dead = False; k3._sess_pending = False
+k3._sess_false = 0; k3._sess_disabled_until = 0.0
 k3.probe_online = lambda: False
 k3.portal_alive = lambda: True
 k3.do_login = lambda: (False, "Task 'NOAUTH:*' not taken")

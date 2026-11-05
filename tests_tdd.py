@@ -805,14 +805,18 @@ def t14_l2_probe_throttled():
     k.probe_online = lambda: True
     calls = []
     old_r, old_h = _k.campus_dns_resolve, _k.physical_http
-    _k.campus_dns_resolve = lambda *a, **kw: calls.append(a) or "1.2.3.4"
+    def dns(host, *a, **kw):
+        calls.append(host)
+        return "1.2.3.4"
+    _k.campus_dns_resolve = dns
     _k.physical_http = lambda *a, **kw: (200, "ok")
     try:
         for _ in range(10):
             k.tick()
     finally:
         _k.campus_dns_resolve, _k.physical_http = old_r, old_h
-    assert len(calls) == 1, f"10 tick 应只 1 次 L2 探测（60s 节流），实际 {len(calls)}"
+    baidu = [c for c in calls if c == "www.baidu.com"]
+    assert len(baidu) == 1, f"10 tick 应只 1 次 L2 探测（60s 节流），实际 {len(baidu)}"
 
 
 def t14_config_values_stripped():
@@ -2794,6 +2798,109 @@ def t32_dark_theme_flattens_borders():
 check("证书校验回显（readonly set 语义）", t32_ssl_combobox_echoes_value)
 check("启动播种历史（凭据不落盘+写失败不击穿）", t32_seed_history)
 check("主题压平边框+按压态+版本标题", t32_dark_theme_flattens_borders)
+
+
+def t36_popdown_listbox_dark():
+    """Combobox 下拉弹出列表暗色化：clam 的 popdown 是原生 Listbox（类名
+    TComb），不吃 ttk 样式、默认白底——点开历史账号/证书校验弹出一块白板，
+    是白点问题审查发现的最后一处亮底残留。option_add 按类名匹配生效。"""
+    import tkinter as tk
+    from shell.theme import PANEL, FG, apply_dark_ttk
+    root = tk.Tk()
+    root.withdraw()
+    apply_dark_ttk(root)
+    top = tk.Toplevel(root, class_="TComb")
+    # 真实 popdown 的 listbox 在 ttk 源码中显式命名 "listbox"
+    # （listbox $popdown.listbox）——合成测试件必须同名才能走同一条
+    # option 数据库匹配路径
+    lb = tk.Listbox(top, name="listbox")
+    try:
+        assert str(lb.cget("background")).lower() == PANEL.lower(), \
+            f"popdown 白底: {lb.cget('background')!r}"
+        assert str(lb.cget("selectbackground")).lower() != "#0000ff", \
+            f"popdown 选中高亮仍是系统蓝: {lb.cget('selectbackground')!r}"
+    finally:
+        top.destroy()
+        lb.destroy()
+        root.destroy()
+
+
+check("下拉弹出列表暗色化", t36_popdown_listbox_dark)
+
+
+def t36_dpi_window_surfaced():
+    """DPI 风控窗口必须上浮到面板细节行/托盘提示：用户实测 18:42——守护
+    判"在线"正确但只写日志，网页打不开的用户以为守护失职而手动重登。
+    在线状态下 L2 观察到受限 → detail 含"DPI/勿"提示；L2 恢复正常 → 清除。"""
+    import keeper as _k
+    import time as _t
+    k = _k.Keeper(_cfg())
+    k.probe_online = lambda: True
+    k.probe_l2_restricted = lambda: True
+    k.fetch_flux = lambda: {"用户名称": "u"}     # 会话探针：活着
+    k._l2_at = 0.0
+    k.tick()
+    assert k.state == "online"
+    assert "DPI" in k.state_detail and "勿" in k.state_detail, \
+        f"受限窗口未上浮: {k.state_detail!r}"
+    assert "DPI" in k.describe_state(), k.describe_state()
+    k._l2_at = 0.0
+    k.probe_l2_restricted = lambda: False
+    k.tick()
+    assert k.state_detail == "", f"窗口结束未清除: {k.state_detail!r}"
+
+
+def t36_fake_online_reconnects_via_flux_ground_truth():
+    """AC「路由通、会话死」假在线封堵：锚点全绿但 userflux 连续 2 次返回
+    空表（=门户回了登录页）→ 判会话已掉，同拍直接走自动重连，重连成功
+    清除判死标记。单次空表不得触发（防抖）。"""
+    import keeper as _k
+    import time as _t
+    k = _k.Keeper(_cfg())
+    k.probe_online = lambda: True
+    k.probe_l2_restricted = lambda: False
+    k.fetch_flux = lambda: {}
+    k.portal_alive = lambda: True
+    k.clash_recover = lambda: None
+    logins = []
+    k.do_login = lambda: logins.append(1) or (True, "ok")
+    k._l2_at = _t.monotonic()
+    k._sess_at = 0.0
+    k.tick()
+    assert k.state == "online" and not logins, "单次空表不得翻转判定"
+    k._sess_at = 0.0
+    k._last_login_at = 0.0
+    k.tick()
+    assert logins, "连续 2 次空表应判假在线并立即重连"
+    assert k.state == "online" and k._session_dead is False, "重连成功须清除"
+
+
+def t36_flux_probe_false_alarm_backoff():
+    """cookie 认会话型异校部署（flux 恒空表但会话真好）：判死→重登→"已
+    在线"→又判死，循环 3 次后探针自我停用 1 小时并留日志——绝不对着好
+    会话无限重登（风暴防线，fetch_flux 文档 P-6 边界的产品化兜底）。"""
+    import keeper as _k
+    import time as _t
+    k = _k.Keeper(_cfg())
+    k.probe_online = lambda: True
+    k.probe_l2_restricted = lambda: False
+    k.fetch_flux = lambda: {}                    # 恒空表：cookie 型门户形态
+    k.portal_alive = lambda: True
+    k.clash_recover = lambda: None
+    logins = []
+    k.do_login = lambda: logins.append(1) or (True, "您已在线")
+    for _ in range(9):                           # ≥3 轮「判死→重登」循环
+        k._sess_at = 0.0
+        k._last_login_at = 0.0
+        k._l2_at = _t.monotonic()
+        k.tick()
+    assert k._sess_disabled_until > _t.monotonic() + 3000, \
+        "3 次假阳性后探针应停用 1 小时"
+
+
+check("DPI 窗口上浮面板/托盘", t36_dpi_window_surfaced)
+check("flux 真值封堵假在线", t36_fake_online_reconnects_via_flux_ground_truth)
+check("flux 探针假阳性自动停用", t36_flux_probe_false_alarm_backoff)
 
 print(f"\n结果: PASS={len(PASS)} FAIL={len(FAIL)} SKIP={len(SKIP)}"
       + ("（真实门户项未启用）" if not LIVE and SKIP else ""))

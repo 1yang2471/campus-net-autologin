@@ -488,6 +488,10 @@ EXCLUDED_SRC_PREFIXES = ("127.", "169.254.", FAKEIP_PREFIX, "198.18.", "198.19."
 # L2 观察节流（trouble-maker P1-5）：在线期 60 秒一探；受限告警每小时去重
 L2_PROBE_S = 60.0
 L2_WARN_DEDUP_S = 3600.0
+SESSION_PROBE_S = 60.0      # L3 会话存活探针周期（userflux 真值，见 _probe_session）
+SESSION_MISS_LIMIT = 2      # 连续空表次数达到该值才判会话死（防抖）
+SESSION_FALSE_LIMIT = 3     # 「判死→重登说在线→又空表」假阳性次数上限
+SESSION_DISABLE_S = 3600.0  # 假阳性超限后探针自停时长（cookie 型门户不适用）
 
 # 响应判定词表默认值：精确等于既有参考校/华为词典，参考校用户零改动。
 # 异校在 config.ini 的 [response] 段覆盖（逗号分隔），见 README「异校适配」。
@@ -716,6 +720,13 @@ class Keeper:
         self._last_login_at = 0.0   # 上次登录尝试时刻（全局最小间隔，LOGIN_MIN_INTERVAL）
         self._probe_online_streak = 0   # probe 连续在线次数（冻结闸门自愈判据）
         self._reject_reason = ""    # 最近一次被拒原因（与状态解耦，portal_down 不再抹掉）
+        self._l2_window_until = 0.0     # DPI 风控窗口观察截止（上浮面板细节行/托盘）
+        self._sess_at = 0.0             # 上次会话存活探针时刻
+        self._sess_miss = 0             # 连续空表打击计数
+        self._session_dead = False      # 会话判死：锚点绿也跳过在线分支（假在线封堵）
+        self._sess_pending = False      # 刚重连成功，待下次探针验证（仍空表=假阳性）
+        self._sess_false = 0            # 「判死→重登说在线→又空表」连续假阳性
+        self._sess_disabled_until = 0.0 # 探针自停截止（cookie 型门户不适用）
         self.extra_wait = 0.0
         self.state = "starting"
         self.state_detail = ""
@@ -895,6 +906,50 @@ class Keeper:
                                  "通常 10-30 分钟自动放行；期间勿反复注销重登", ip, body)
             return True
         return False
+
+    def _probe_session(self) -> None:
+        """L3 会话存活（flux 真值）：userflux 按源 IP 认会话——活着返回
+        流量表，被踢返回登录页（解析成空表）。封堵 AC「路由通、会话死」
+        假在线（2026-11-05 18:42 实测：游戏流被掐、锚点却全程绿）。
+
+        防风暴双保险：连续 SESSION_MISS_LIMIT 次空表才判死；判死重连后
+        flux 仍空表（门户实际在线、flux 端点不适配）记一次假阳性，连续
+        SESSION_FALSE_LIMIT 次自停 SESSION_DISABLE_S 秒——见 fetch_flux
+        文档 P-6：cookie 认会话型部署恒空表，探针对其必须会退场。"""
+        now = time.monotonic()
+        if (self._session_dead or now < self._sess_disabled_until
+                or now - self._sess_at < SESSION_PROBE_S):
+            return
+        self._sess_at = now
+        try:
+            flux = self.fetch_flux()
+        except Exception:  # noqa: BLE001 探针异常=未知，不计数
+            return
+        if "错误" in flux:
+            return  # 门户不可达属离线分支职权，这里不判死
+        if flux:
+            self._sess_miss = 0
+            self._sess_false = 0
+            self._sess_pending = False
+            return
+        if self._sess_pending:
+            self._sess_pending = False
+            self._sess_false += 1
+            if self._sess_false >= SESSION_FALSE_LIMIT:
+                self._sess_disabled_until = now + SESSION_DISABLE_S
+                self._sess_miss = 0
+                self.log.warning("flux 空表与重登结果连续 %s 次矛盾——该门户可能是 "
+                                 "cookie 认会话型（查流量都正常但 flux 拿不到表），"
+                                 "会话探针停用 %s 秒", self._sess_false,
+                                 int(SESSION_DISABLE_S))
+            return
+        self._sess_miss += 1
+        if self._sess_miss >= SESSION_MISS_LIMIT:
+            self._sess_miss = 0
+            self._session_dead = True
+            self.log.warning("锚点在线但 userflux 连续 %s 次空表——AC「路由通、"
+                             "会话死」假在线，按掉线处理（自动重连）",
+                             SESSION_MISS_LIMIT)
 
     def portal_alive(self) -> bool:
         """第二层：认证服务器是否存活（物理栈，登录页可达即算）。"""
@@ -1111,6 +1166,8 @@ class Keeper:
 
     def describe_state(self) -> str:
         if self.state == "online":
+            if time.monotonic() < self._l2_window_until:
+                return "在线（DPI 风控窗口：认证正常，勿重登）"
             return "在线"
         if self.state == "paused":
             return "自动重连已关闭"
@@ -1136,36 +1193,49 @@ class Keeper:
         self.force_evt.set()
 
     def tick(self, manual: bool = False) -> None:
-        """一次探测周期：三层判定 + L2 策略层观察 + 按需登录 + 登录风暴熔断。
+        """一次探测周期：三层判定 + L2 策略层观察 + L3 会话真值 + 按需登录
+        + 登录风暴熔断。
 
         manual=True（用户点「立即检测重连」）放行登录；周期 tick 受
         auto_reconnect 开关约束。
         """
         if self.probe_online():
-            # L1 通 ≠ 完全在线：出口 DPI 可能拦大众站（2026-11-04 实测）。
-            # 受限是"观察态"：状态仍 online（认证没掉），仅日志留痕，绝不自动干预。
-            self.set_state("online")  # 网络自愈时也须点亮（审查 P0-4：原缺此句致卡红）
-            # 冻结闸门自愈（2026-11-05 实战）：用户手动登录/网络真恢复后
-            # probe 连续 3 次在线，闸门自动解除，守护不再压着装死。
-            self._probe_online_streak += 1
-            if self._frozen_until and self._probe_online_streak >= 3:
-                self._frozen_until = 0.0
-                self.log.info("探测连续 3 次在线，冻结闸门解除")
             # L2 节流（trouble-maker P1-5）：每 tick 都 TLS 握手 baidu 既刷爆
             # 轮转日志，又高频撞 DPI 黑名单——在线期 60 秒一探足够。
+            # 观察结果记入 _l2_window_until：受限窗口要上浮到面板/托盘，
+            # 只写日志=用户看不见（2026-11-05 18:42 实测被误当"守护失职"）。
             if time.monotonic() - self._l2_at >= L2_PROBE_S:
                 self._l2_at = time.monotonic()
-                self.probe_l2_restricted()
-            self.reject_until = 0.0
-            self.suspect = 0
-            self.extra_wait = 0.0
-            # 抖动环境（2026-11-05 夜间实测 00:00-06:32 抖动 6.5h、冻结 5 次）：
-            # 单次 probe 在线可能是抖动假信号，不清瞬态连击——连续 3 次在线
-            # （环境稳定）才清，否则抖动期 streak 永远升不到长退避，
-            # 整夜 30s 短节流轰炸登录 → 门户反复冻结。
-            if self._probe_online_streak >= 3:
-                self.transient_streak = 0
-            return
+                self._l2_window_until = (time.monotonic() + 2 * L2_PROBE_S
+                                         if self.probe_l2_restricted() else 0.0)
+            # L1 通 ≠ 认证在线：flux 真值盖章后才点亮（_probe_session 详注）
+            self._probe_session()
+            if self._session_dead:
+                # 假在线：锚点全绿但会话已被门户掐断（游戏/长连接实测已掉）
+                # ——不当在线，继续往下走掉线重连流程（判死日志已由
+                # _probe_session 打过，这里每 tick 静默 fall through）
+                pass
+            else:
+                self.set_state("online",
+                               "DPI 风控窗口：网页打不开勿重登（认证正常）"
+                               if time.monotonic() < self._l2_window_until
+                               else "")  # 网络自愈时也须点亮（审查 P0-4：原缺此句致卡红）
+                # 冻结闸门自愈（2026-11-05 实战）：用户手动登录/网络真恢复后
+                # probe 连续 3 次在线，闸门自动解除，守护不再压着装死。
+                self._probe_online_streak += 1
+                if self._frozen_until and self._probe_online_streak >= 3:
+                    self._frozen_until = 0.0
+                    self.log.info("探测连续 3 次在线，冻结闸门解除")
+                self.reject_until = 0.0
+                self.suspect = 0
+                self.extra_wait = 0.0
+                # 抖动环境（2026-11-05 夜间实测 00:00-06:32 抖动 6.5h、冻结 5 次）：
+                # 单次 probe 在线可能是抖动假信号，不清瞬态连击——连续 3 次在线
+                # （环境稳定）才清，否则抖动期 streak 永远升不到长退避，
+                # 整夜 30s 短节流轰炸登录 → 门户反复冻结。
+                if self._probe_online_streak >= 3:
+                    self.transient_streak = 0
+                return
         self._probe_online_streak = 0
         if not self.portal_alive():
             self.set_state("portal_down")
@@ -1205,6 +1275,10 @@ class Keeper:
         self._last_login_at = time.monotonic()
         ok, msg = self.do_login()
         if ok:
+            # 重连成功即解除 flux 判死；下次会话探针验证：若刚重登 flux
+            # 仍空表（门户明明在线）→ 探针假阳性，计入自停额度
+            self._session_dead = False
+            self._sess_pending = True
             # 熔断：连续 3 次"登录成功但下一轮探测仍失败"说明判定链在骗我们，
             # 强制退避，避免每 interval 轰炸 login.php 触发门户风控
             self.suspect += 1
