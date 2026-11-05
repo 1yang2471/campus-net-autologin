@@ -33,6 +33,7 @@ def build_command() -> list[str]:
         "--hidden-import", "shell.app",
         "--hidden-import", "shell.kernel_api",
         "--hidden-import", "shell.credentials",
+        "--hidden-import", "shell.accounts",
         "--hidden-import", "shell.keeper_paths",
         "--hidden-import", "shell.desk",
         "--hidden-import", "shell.windows",
