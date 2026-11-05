@@ -26,6 +26,11 @@ BASE_DIR = _data_dir()
 CONFIG_FILE: Path = BASE_DIR / "config.ini"
 LOG_FILE: Path = BASE_DIR / "keeper.log"
 
+# 版本常量：面板标题/启动日志/冒烟取证三处消费（trouble-maker P0：v1.0.4
+# 前无任何版本指纹，用户无法分辨运行的是哪个构建——"看起来没修好"的根因）
+APP_NAME = "campus-net-autologin"
+APP_VERSION = "1.0.5"
+
 
 def read_ini() -> configparser.ConfigParser:
     """utf-8-sig 兼容记事本 BOM；interpolation=None 兼容密码含 %。"""

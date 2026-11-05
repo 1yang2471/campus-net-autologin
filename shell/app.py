@@ -16,7 +16,7 @@ import tkinter as tk
 from tkinter import messagebox, ttk
 
 from .kernel_api import STATE_COLORS, STATE_LABELS  # noqa: E402
-from .keeper_paths import LOG_FILE  # noqa: E402
+from .keeper_paths import LOG_FILE, APP_VERSION  # noqa: E402
 from .theme import (BG, PANEL, PANEL_EDGE, FG, FG_DIM, MONO, DISPLAY,  # noqa: E402
                     DISPLAY_BOLD, DISPLAY_SMALL, apply_dark_ttk, lamp_photo)
 
@@ -31,7 +31,7 @@ class Shell(tk.Tk):
         self._detect_q: queue.Queue = queue.Queue()
         self._test_q: queue.Queue = queue.Queue()
         self._last_state = None
-        self.title("campus-net-autologin")
+        self.title(f"campus-net-autologin v{APP_VERSION}")
         self.configure(bg=BG)
         apply_dark_ttk(self)
         self._icon = lamp_photo(master=self)  # 任务栏挂状态灯（显式绑根，见 theme 注释）
@@ -259,6 +259,8 @@ class Shell(tk.Tk):
         if server:
             self.e_server.delete(0, "end")
             self.e_server.insert(0, server)
+        if ok:
+            self._refresh_accounts(current=user)   # remember 已重排置顶
         self._detect_hint.config(text=msg,
                                  fg="#63b073" if ok else "#d1a54a")
 
@@ -297,9 +299,11 @@ class Shell(tk.Tk):
             e.insert(0, str(cfg.get(_key, "")))
         self._auto_on = str(cfg.get("auto_reconnect", "true")).lower() == "true"
         self._render_auto()
-        # 历史账号下拉（免打字）：密码走 keyring 恢复，选中即切（见
-        # _on_switch_account）。历史直接读 ini [accounts] 段（只读、容错，
-        # 读失败=空列表不阻塞面板），不经内核：避免为 UI 细节扩张协议。
+        self._refresh_accounts(str(cfg.get("username", "")).strip())
+
+    def _refresh_accounts(self, current: str = "") -> None:
+        """重读 ini [accounts] 并刷新下拉；current 在列表内则预选（trouble-maker
+        P2：打开面板下拉空白——当前账号明明在列表里却不回显）。"""
         try:
             from .keeper_paths import read_ini
             parser = read_ini()
@@ -314,6 +318,8 @@ class Shell(tk.Tk):
         except Exception:  # noqa: BLE001 历史读失败不阻塞面板
             self._accounts = []
         self.c_account.config(values=[u for u, _ in self._accounts])
+        if current and any(u == current for u, _ in self._accounts):
+            self.c_account.set(current)
 
     def _on_save_settings(self) -> None:
         values: dict[str, str] = {}
@@ -441,9 +447,11 @@ class Shell(tk.Tk):
             if wizard:
                 self.destroy()  # 保存即交棒，下轮启动守护
                 return
+            self._refresh_accounts(current=user)
             messagebox.showinfo("已保存", "凭据已保存，守护会在联网时自动重试", parent=self)
             return
         self.kernel.save_credentials(user, pwd, server)
+        self._refresh_accounts(current=user)
         # 向导保存成功 → 关窗交棒：app_main 启动环检测到凭据就绪即拉起守护
         if wizard:
             messagebox.showinfo("已保存", "登录验证通过，守护即将开始工作", parent=self)

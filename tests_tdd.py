@@ -2689,6 +2689,7 @@ check("快照透传 paused", t32_facade_snapshot_maps_paused)
 check("面板历史切换+自动重连勾选", t32_shell_switch_and_toggle)
 check("paused 颜色跨层同步", t32_tray_panel_paused_colors_in_sync)
 
+
 def t32_ssl_combobox_echoes_value():
     """readonly Combobox 回显回归锁：set() 才有效——delete+insert 被 readonly
     校验静默拒绝（用户实测"证书校验"永远空白，v1.0.2 既有缺陷）。"""
@@ -2709,16 +2710,90 @@ def t32_ssl_combobox_echoes_value():
         def detect_portal(self): return ""
         def save_settings(self, v): ...
 
-    win = Shell(K())
-    try:
-        win.update()
-        assert win.e_ssl.get() == "false", \
-            f"证书校验回显丢失: {win.e_ssl.get()!r}"
-    finally:
-        win.destroy()
+    def run(tmp):
+        win = Shell(K())
+        win.attributes("-alpha", 0.0)
+        win._adv_win.attributes("-alpha", 0.0)
+        try:
+            win.update()
+            assert win.e_ssl.get() == "false", \
+                f"证书校验回显丢失: {win.e_ssl.get()!r}"
+        finally:
+            win.destroy()
+    _with_temp_config(run)  # 纪律：不读真实用户 ini，测试窗口不闪现
+
+
+def t32_seed_history():
+    """启动播种行为锁（trouble-maker P1-5）：当前账号进 [accounts]、cfg 携带的
+    凭据值绝不落盘、空账号 no-op、ini 不可写（占用/杀软）只留日志不击穿启动环。"""
+    import app_main
+
+    def run(tmp):
+        app_main._seed_history({"username": "seed01", "server": "https://s",
+                                "password": "pw"})
+        from shell.accounts import list_accounts
+        assert list_accounts() == [("seed01", "https://s")], list_accounts()
+        assert "pw" not in tmp.read_text(encoding="utf-8"), \
+            "播种路径不得把 cfg 凭据写进 ini"
+        app_main._seed_history({"username": "", "server": "x", "password": "pw"})
+        assert list_accounts() == [("seed01", "https://s")], "空账号须 no-op"
+        # 写盘不可用：CONFIG_FILE 指向不存在的深层目录 → write_text 抛 OSError
+        import shell.keeper_paths as _kp
+        old = _kp.CONFIG_FILE
+        _kp.CONFIG_FILE = tmp.parent / "no" / "such" / "dir" / "config.ini"
+        try:
+            app_main._seed_history({"username": "seed02", "server": "https://s2"})
+        finally:
+            _kp.CONFIG_FILE = old
+        # 不抛异常即通过（播种失败仅日志告警，启动环继续）
+    _with_temp_config(run)
+
+
+def t32_dark_theme_flattens_borders():
+    """主题修复行为锁：白点根因是 clam 默认 2px 斜角边框的四角像素不跟随
+    bordercolor——三族控件都必须 1px；combobox 按压态不得回落亮米色；
+    面板标题带版本号（用户分辨新旧构建的界面指纹，trouble-maker P0）。"""
+    from shell.app import Shell
+    from shell.keeper_paths import APP_VERSION
+    from tkinter import ttk
+
+    class K:
+        needs_setup = False
+        def snapshot(self):
+            return {"state": "online", "detail": "", "interval": 3,
+                    "reject_remaining": 0}
+        def get_settings(self): return {}
+        def fetch_flux(self): return {}
+        def force_reconnect(self): ...
+        def on_change(self, cb): ...
+        def save_credentials(self, *a): ...
+        def switch_account(self, u): return True, "ok"
+        def test_credentials(self, *a): return True, "ok"
+        def detect_portal(self): return ""
+        def save_settings(self, v): ...
+
+    def run(tmp):
+        win = Shell(K())
+        win.attributes("-alpha", 0.0)
+        win._adv_win.attributes("-alpha", 0.0)
+        try:
+            st = ttk.Style(win)
+            for cls in ("TEntry", "TCombobox", "TScrollbar"):
+                assert st.lookup(cls, "borderwidth") == 1, \
+                    f"{cls} 边框宽度未压平（四角白点回归）"
+            bg_map = dict(st.map("TCombobox").get("background", []))
+            assert bg_map.get("pressed") not in (None, "#eeebe7"), \
+                f"combobox 按压态亮米色残留: {bg_map}"
+            assert APP_VERSION in win.title(), \
+                f"标题缺版本指纹: {win.title()!r}"
+        finally:
+            win.destroy()
+    _with_temp_config(run)
 
 
 check("证书校验回显（readonly set 语义）", t32_ssl_combobox_echoes_value)
+check("启动播种历史（凭据不落盘+写失败不击穿）", t32_seed_history)
+check("主题压平边框+按压态+版本标题", t32_dark_theme_flattens_borders)
 
 print(f"\n结果: PASS={len(PASS)} FAIL={len(FAIL)} SKIP={len(SKIP)}"
       + ("（真实门户项未启用）" if not LIVE and SKIP else ""))

@@ -18,6 +18,36 @@ if str(ROOT) not in sys.path:
 
 from keeper import (Keeper, load_config, ensure_config, setup_logging,  # noqa: E402
                     acquire_single_instance, save_config, LOG_FILE, CONFIG_FILE)
+from shell.keeper_paths import APP_VERSION  # noqa: E402
+
+
+def _seed_history(cfg: dict) -> None:
+    """启动即播种历史：当前账号永远出现在面板「历史账号」下拉（升级上来的
+    用户没有再走保存流程，不播种列表就是空的）。写盘失败只告警——播种是
+    锦上添花，守护才是主业（trouble-maker P1：不得击穿启动环）。"""
+    user = str(cfg.get("username", "")).strip()
+    if not user:
+        return
+    try:
+        from shell.accounts import remember_account
+        remember_account(user, str(cfg.get("server", "")).strip())
+    except OSError as exc:  # noqa: BLE001
+        logging.getLogger("keeper").warning("播种历史账号失败：%s（不影响启动）", exc)
+
+
+def _notify_existing_instance() -> None:
+    """旧实例运行中双击新 exe：pythonw 的日志没人看，弹窗当面说清升级方法
+    （trouble-maker P0：静默退出被误读成"修复没生效"）。无桌面会话仅日志。"""
+    try:
+        import ctypes
+        ctypes.windll.user32.MessageBoxW(
+            None,
+            "campus-net-autologin 已在运行（旧实例）。\n\n"
+            "新版本不会同时生效——请先在系统托盘图标右键「退出」，\n"
+            "再重新打开新版本。",
+            "已在运行", 0x40)  # MB_ICONINFORMATION
+    except Exception:  # noqa: BLE001 RDP/服务会话无桌面
+        pass
 
 
 def _store_password(user: str, pwd: str) -> str:
@@ -289,17 +319,19 @@ def main() -> None:
     setup_logging()
     _install_crash_hooks()
     log = logging.getLogger("keeper")
+    log.info("campus-net-autologin v%s 启动", APP_VERSION)
     if not acquire_single_instance():
-        log.error("已有实例在运行（keeper.lock 被占用），退出")
+        # trouble-maker P0：旧进程活着时新 exe 双击静默退出——这是用户
+        # "看起来没变化"的直接机制。日志 + 桌面提示双保险，不再只进无人看的 log。
+        log.error("已有实例在运行（keeper.lock 被占用），退出；"
+                  "如需升级到新版本，请先在托盘退出旧实例")
+        _notify_existing_instance()
         return
     # 首跑循环：向导（console 或 GUI）保存后回到这里，凭据齐了就启动守护
     for _ in range(3):
         cfg, ready = _effective_config()
         if ready:
-            # 启动即播种历史：当前账号永远出现在面板「历史账号」下拉
-            # （升级上来的用户没有再走保存流程，不播种列表就是空的）
-            from shell.accounts import remember_account
-            remember_account(cfg.get("username", ""), cfg.get("server", ""))
+            _seed_history(cfg)
             break
         if sys.stdin and sys.stdin.isatty():
             cfg = ensure_config(cfg)

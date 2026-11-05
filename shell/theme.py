@@ -65,8 +65,11 @@ def apply_dark_ttk(root) -> None:
                  selectforeground=FG, bordercolor=PANEL_EDGE,
                  lightcolor=PANEL, darkcolor=PANEL, borderwidth=1)
     st.map("TCombobox", fieldbackground=[("readonly", PANEL)],
-           foreground=[("readonly", FG)])
+           foreground=[("readonly", FG)],
+           # clam 默认 active/pressed 是亮米色(#eeebe7)，暗色面板上点箭头会闪白
+           background=[("readonly", PANEL), ("active", PANEL_EDGE),
+                       ("pressed", PANEL_EDGE)])
     st.configure("TScrollbar", background="#3a4048", troughcolor=PANEL,
                  bordercolor=PANEL, lightcolor=PANEL, darkcolor=PANEL,
-                 arrowcolor=FG_DIM, arrowsize=12)
+                 arrowcolor=FG_DIM, arrowsize=12, borderwidth=1)
     st.map("TScrollbar", background=[("active", "#4a525c")])
