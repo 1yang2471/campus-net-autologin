@@ -54,6 +54,7 @@ k2.interval = 3.0; k2.probe_timeout = 3.0
 k2.reject_backoff = 600.0; k2.portal_down_wait = 30.0
 k2.transient_backoff = 30.0
 k2.reject_until = 0.0; k2.suspect = 0; k2.transient_streak = 0; k2.extra_wait = 0.0
+k2.auto_reconnect = True   # tick 派生属性（__new__ 绕过 _derive_runtime，须手动装配）
 k2._frozen_until = 0.0   # 门户限频冻结闸门（__new__ 手工装配须同步，2026-11-05）
 k2._last_login_at = 0.0; k2._probe_online_streak = 0; k2._reject_reason = ""
 k2.portal_alive = lambda: True
@@ -78,6 +79,7 @@ k3.state = "starting"; k3.state_detail = ""; k3.on_state = None; k3.state_listen
 k3.interval = 3.0; k3.probe_timeout = 3.0
 k3.reject_backoff = 600.0; k3.transient_backoff = 30.0; k3.portal_down_wait = 30.0
 k3.reject_until = 0.0; k3.suspect = 0; k3.transient_streak = 0; k3.extra_wait = 0.0
+k3.auto_reconnect = True   # tick 派生属性（__new__ 绕过 _derive_runtime，须手动装配）
 k3._frozen_until = 0.0   # 同上：__new__ 手工装配须同步
 k3._last_login_at = 0.0; k3._probe_online_streak = 0; k3._reject_reason = ""
 k3.probe_online = lambda: False

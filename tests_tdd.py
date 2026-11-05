@@ -325,7 +325,8 @@ def t8_facade_satisfies_kernel_protocol():
     k = _km.Keeper(cfg)
     f = app_main.KeeperFacade(k)
     for meth in ("snapshot", "force_reconnect", "fetch_flux",
-                 "on_change", "test_credentials", "save_credentials"):
+                 "on_change", "test_credentials", "save_credentials",
+                 "switch_account"):
         assert hasattr(f, meth) and callable(getattr(f, meth)), f"缺 {meth}"
     assert f.needs_setup is False
     snap = f.snapshot()
@@ -2359,6 +2360,334 @@ def t31_uncaught_exceptions_leave_autopsy():
 
 check("probe 抖动不清瞬态连击", t31_probe_flap_does_not_reset_transient_streak)
 check("进程崩溃留尸检日志", t31_uncaught_exceptions_leave_autopsy)
+
+print("== 循环32：多账号历史 + 自动重连开关 ==")
+
+
+def t32_accounts_roundtrip():
+    """[accounts] 段：置顶去重、序号=最近使用序、超限淘汰最旧，不碰其它段。"""
+    import configparser
+    from shell.accounts import remember_account, list_accounts
+    import shell.accounts as _acct
+
+    def run(tmp):
+        remember_account("u1", "https://s1")
+        remember_account("u2", "https://s2")
+        remember_account("u1", "https://s1b")   # 同账号：提顶更新服务器，不新增
+        got = list_accounts()
+        assert got == [("u1", "https://s1b"), ("u2", "https://s2")], got
+        for i in range(3, 7):                    # 超 MAX：最旧的被挤掉
+            remember_account(f"u{i}", f"https://s{i}")
+        got = list_accounts()
+        assert len(got) == _acct.MAX_ACCOUNTS and got[0][0] == "u6", got
+        assert ("u2", "https://s2") not in got, "超限须淘汰最旧"
+        # [keeper] 与 [accounts] 互不干扰（save_config 增量写保留其它段）
+        _km.save_config({"username": "u6", "server": "https://s6"})
+        assert list_accounts()[0][0] == "u6"
+        assert _km.load_config()["username"] == "u6"
+        # 密码绝不落历史：每条值恒为 username|server 两段，无第三段
+        p = configparser.ConfigParser(interpolation=None)
+        p.read(tmp, encoding="utf-8")
+        for key, val in p.items("accounts"):
+            assert val.count("|") == 1, (key, val)
+    _with_temp_config(run)
+
+
+def t32_facade_save_credentials_remembers():
+    """保存凭据（面板/向导两条路）即写入历史，当前账号不变语义不受影响。"""
+    import app_main
+    from shell.accounts import list_accounts
+    users = ["__t32_s1__", "__t32_s2__"]
+
+    def run(tmp):
+        cfg = dict(_km.DEFAULTS)
+        cfg.update({"username": users[0], "password": "pw1"})
+        _km.save_config(cfg)
+        k = _km.Keeper(cfg)
+        f = app_main.KeeperFacade(k)
+        f.save_credentials(users[0], "pw1", "https://a.example")
+        f.save_credentials(users[1], "pw2", "https://b.example")
+        got = list_accounts()
+        assert [u for u, _ in got] == [users[1], users[0]], got
+        # 空密码保存（"不改已存凭据"语义）同样入历史（P1-4 行为保持）
+        f.save_credentials(users[0], "", "https://a.example")
+        assert list_accounts()[0][0] == users[0]
+    try:
+        _with_temp_config(run)
+    finally:
+        import keyring
+        for u in users:
+            try:
+                keyring.delete_password("campus-net-autologin", u)
+            except Exception:  # noqa: BLE001
+                pass
+
+
+def t32_facade_switch_account():
+    """切换历史账号：密码从 keyring 按用户名还原；取不到密码必须拒绝——
+    绝不能把旧账号密码带进新账号（save_credentials 留空=不改的陷阱）。"""
+    import app_main
+    test_users = ["__t32_a__", "__t32_b__"]
+
+    def run(tmp):
+        cfg = dict(_km.DEFAULTS)
+        cfg.update({"username": test_users[0], "password": "pa"})
+        _km.save_config(cfg)
+        k = _km.Keeper(cfg)
+        f = app_main.KeeperFacade(k)
+        f.save_credentials(test_users[0], "pa", "https://a.example")
+        f.save_credentials(test_users[1], "pb", "https://b.example")
+        # 切回 a：运行态/表单/磁盘全部换成 a，密码从 keyring 还原
+        ok, msg = f.switch_account(test_users[0])
+        assert ok, msg
+        assert k.cfg["username"] == test_users[0]
+        assert k.cfg["password"] == "pa", "须还原 a 自己的密码，不是 b 的"
+        assert k.form["userName"] == test_users[0] and k.form["pwd"] == "pa"
+        disk = _km.load_config()
+        assert disk["username"] == test_users[0]
+        assert disk["password"] == "<keyring>", "磁盘只准写占位"
+        # 不在历史：拒绝且运行态纹丝不动
+        ok, msg = f.switch_account("__t32_ghost__")
+        assert not ok and "__t32_ghost__" in msg
+        assert k.cfg["username"] == test_users[0]
+    try:
+        _with_temp_config(run)
+    finally:
+        import keyring
+        for u in test_users:
+            try:
+                keyring.delete_password("campus-net-autologin", u)
+            except Exception:  # noqa: BLE001
+                pass
+
+
+def t32_switch_missing_password_refuses():
+    """历史里有账号但 keyring 无密码（如曾明文降级/手改 ini）：拒绝切换、
+    提示补密，运行态不被污染。"""
+    import app_main
+
+    def run(tmp):
+        cfg = dict(_km.DEFAULTS)
+        cfg.update({"username": "u", "password": "p"})
+        _km.save_config(cfg)
+        k = _km.Keeper(cfg)
+        f = app_main.KeeperFacade(k)
+        from shell.accounts import remember_account
+        remember_account("__t32_nopwd__", "https://s")
+        ok, msg = f.switch_account("__t32_nopwd__")
+        assert not ok, "无密码账号不得切换"
+        assert "密码" in msg, msg
+        assert k.cfg["username"] == "u", "拒绝不得污染运行态"
+    _with_temp_config(run)
+
+
+def t32_paused_skips_login_manual_bypasses():
+    """auto_reconnect=false：周期 tick 探测照跑但绝不登录（state=paused）；
+    manual tick（用户显式重连/保存凭据唤醒）放行——开关只拦"自动"。"""
+    import keeper as _k
+    k = _k.Keeper(_cfg(auto_reconnect="false"))
+    assert k.auto_reconnect is False
+    logins = []
+    k.probe_online = lambda: False
+    k.portal_alive = lambda: True
+    k.do_login = lambda: logins.append(1) or (True, "")
+    k.clash_recover = lambda: None
+    k.tick()
+    assert not logins and k.state == "paused", "关闭开关周期 tick 不得登录"
+    assert k.describe_state() == "自动重连已关闭"
+    k._last_login_at = 0.0
+    k.tick(manual=True)
+    assert len(logins) == 1, "manual tick 必须放行登录"
+
+
+def t32_default_on_and_only_true_enables():
+    """向后兼容：缺省=开；仅显式 true 才算开（0/off/乱填=关，保守方向
+    是不擅自登录）；hot reload 改开关立即生效。"""
+    import keeper as _k
+    assert _k.Keeper(_cfg()).auto_reconnect is True, "旧 ini 无此键须保持自动重连"
+    for bad in ("false", "0", "off", ""):
+        assert _k.Keeper(_cfg(auto_reconnect=bad)).auto_reconnect is False, bad
+    k = _k.Keeper(_cfg())
+    k.apply_config(_cfg(auto_reconnect="false"))
+    assert k.auto_reconnect is False, "热载关开关即生效"
+    # 关闭时保存配置不得"顺手"登录一次；开启时保持"保存即重连"
+    k.probe_online = lambda: False
+    k.portal_alive = lambda: True
+    logins = []
+    k.do_login = lambda: logins.append(1) or (True, "")
+    k.apply_config(_cfg(auto_reconnect="false"))
+    assert k._manual_pending is False, "关开关的保存动作不得标记手动放行"
+    k.apply_config(_cfg(auto_reconnect="true"))
+    assert k._manual_pending is True and k.force_evt.is_set(), "开开关须立即重连"
+
+
+def t32_run_loop_passes_manual_intent():
+    """run 循环把"唤醒原因"传进 tick：request_reconnect（用户意图）放行；
+    超时周期 tick 不放行——auto 关时后者必须停在 paused。"""
+    import threading
+    import time as _time
+    import keeper as _k
+    k = _k.Keeper(_cfg(auto_reconnect="false", interval="1"))
+    seen = []
+    started = threading.Event()
+
+    def fake_tick(manual=False):
+        seen.append(bool(manual))
+        if not started.is_set():
+            started.set()
+        return
+    k.tick = fake_tick
+    th = threading.Thread(target=k.run, daemon=True)
+    th.start()
+    try:
+        assert started.wait(5), "run 应至少 tick 一次"
+        k.request_reconnect()          # 用户点「立即检测重连」
+        deadline = _time.time() + 6
+        while _time.time() < deadline and True not in seen:
+            _time.sleep(0.05)
+    finally:
+        k.stop_evt.set()
+        k.force_evt.set()
+        th.join(timeout=6)
+    assert seen and seen[0] is False, "启动/周期 tick 不得带 manual"
+    assert True in seen, "request_reconnect 唤醒的那次 tick 必须 manual=True"
+
+
+def t32_tray_force_goes_through_request_reconnect():
+    """托盘「立即检测重连」与面板同一实现：清退避 + 标记手动意图，
+    关闭自动重连时托盘按钮仍要能用。"""
+    from keeper import DEFAULTS, Keeper, Tray
+    cfg = dict(DEFAULTS)
+    cfg.update({"username": "smoke", "password": "smoke"})
+    k = Keeper(cfg)
+    k.reject_until = 9999.0
+    tray = Tray(k)
+    item = next(it for it in tray.icon.menu
+                if "立即检测重连" in str(getattr(it, "text", it)))
+    item(None)
+    tray.icon.stop()
+    assert k.reject_until == 0.0, "托盘按钮须清退避（与面板一致）"
+    assert k._manual_pending is True and k.force_evt.is_set()
+
+
+def t32_facade_snapshot_maps_paused():
+    """paused 是真实状态，不得被降级映射成 offline（指示灯语义漂移）。"""
+    import app_main
+    import keeper as _k
+    k = _k.Keeper(_cfg(auto_reconnect="false"))
+    k.state = "paused"
+    k.state_detail = "自动重连已关闭"
+    snap = app_main.KeeperFacade(k).snapshot()
+    assert snap["state"] == "paused", snap
+
+
+def t32_shell_switch_and_toggle():
+    """面板：历史下拉填充+选中即切（失败也回显账号等补密）；
+    「掉线自动重连」勾选框回显 ini 值并随保存写回。"""
+    import shell.app as app_mod
+    from shell.app import Shell
+    orig_info = app_mod.messagebox.showinfo
+    orig_err = app_mod.messagebox.showerror
+    orig_warn = app_mod.messagebox.showwarning
+    app_mod.messagebox.showinfo = lambda *a, **k: None
+    app_mod.messagebox.showerror = lambda *a, **k: None
+    app_mod.messagebox.showwarning = lambda *a, **k: None
+
+    def run(tmp):
+        from shell.accounts import remember_account
+        remember_account("hist01", "https://s-h")
+        remember_account("hist02", "https://s-h2")
+        saved, switched = [], []
+
+        class K:
+            needs_setup = False
+
+            def snapshot(self):
+                return {"state": "paused", "detail": "自动重连已关闭",
+                        "interval": 3, "reject_remaining": 0}
+
+            def save_settings(self, v):
+                saved.append(v)
+
+            def fetch_flux(self):
+                return {}
+
+            def force_reconnect(self): ...
+            def on_change(self, cb): ...
+            def save_credentials(self, *a): ...
+
+            def switch_account(self, u):
+                switched.append(u)
+                if u == "hist02":
+                    return False, "hist02 的密码不在凭据管理器，请填写密码"
+                return True, f"已切换到 {u}，正在用已存凭据重连"
+
+            def test_credentials(self, *a):
+                return True, "ok"
+
+            def detect_portal(self):
+                return ""
+
+            def get_settings(self):
+                return {"auto_reconnect": "false", "username": "cur",
+                        "server": "https://s-old", "bind_ip": ""}
+
+        win = Shell(K())
+        win.attributes("-alpha", 0.0)
+        win._adv_win.attributes("-alpha", 0.0)
+        win.update()
+        try:
+            vals = list(win.c_account.cget("values"))
+            assert vals == ["hist02", "hist01"], vals   # 最近保存的置顶
+            assert win._auto_on is False, "ini false 须回显未勾选"
+            # 选中可切换账号 → 协议调用 + 表单/提示回显
+            win.c_account.current(1)
+            win._on_switch_account()
+            assert switched == ["hist01"]
+            assert win.e_user.get() == "hist01"
+            assert win.e_server.get() == "https://s-h"
+            assert "已切换" in win._detect_hint.cget("text")
+            # 无密码账号切换失败：不假装成功，但仍回显供用户补密
+            win.c_account.current(0)
+            win._on_switch_account()
+            assert switched == ["hist01", "hist02"]
+            assert win.e_user.get() == "hist02"
+            assert "密码" in win._detect_hint.cget("text")
+            # 点开关 → 文案翻转、保存写 true
+            win._toggle_auto()
+            assert win._auto_on is True
+            assert "开" in win._btn_auto.cget("text")
+            win._on_save_settings()
+            assert saved and saved[-1]["auto_reconnect"] == "true", saved
+        finally:
+            win.destroy()
+            app_mod.messagebox.showinfo = orig_info
+            app_mod.messagebox.showerror = orig_err
+            app_mod.messagebox.showwarning = orig_warn
+    _with_temp_config(run)
+
+
+def t32_tray_panel_paused_colors_in_sync():
+    """新增 paused 状态跨内核/外壳成对常量（循环4 同款校验，显式点名新键）。"""
+    from keeper import TRAY_COLORS
+    from shell.kernel_api import STATE_COLORS, STATE_LABELS
+    assert "paused" in TRAY_COLORS and "paused" in STATE_COLORS
+    assert STATE_LABELS["paused"] == "自动重连已关闭"
+    want = "#{:02x}{:02x}{:02x}".format(*TRAY_COLORS["paused"])
+    assert STATE_COLORS["paused"].lower() == want.lower()
+
+
+check("accounts 段读写/去重/淘汰/段隔离", t32_accounts_roundtrip)
+check("保存凭据即入历史", t32_facade_save_credentials_remembers)
+check("切换账号还原 keyring 密码", t32_facade_switch_account)
+check("无密码历史账号拒绝切换", t32_switch_missing_password_refuses)
+check("关闭自动重连：探测不登录，manual 放行", t32_paused_skips_login_manual_bypasses)
+check("开关默认开+仅 true 开+热载生效", t32_default_on_and_only_true_enables)
+check("run 循环传递手动意图", t32_run_loop_passes_manual_intent)
+check("托盘立即重连与面板同实现", t32_tray_force_goes_through_request_reconnect)
+check("快照透传 paused", t32_facade_snapshot_maps_paused)
+check("面板历史切换+自动重连勾选", t32_shell_switch_and_toggle)
+check("paused 颜色跨层同步", t32_tray_panel_paused_colors_in_sync)
 
 print(f"\n结果: PASS={len(PASS)} FAIL={len(FAIL)} SKIP={len(SKIP)}"
       + ("（真实门户项未启用）" if not LIVE and SKIP else ""))

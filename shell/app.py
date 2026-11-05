@@ -97,6 +97,13 @@ class Shell(tk.Tk):
         self._save_btn.pack(side="left", expand=True, fill="x", padx=(0, 6))
         self._button(row, "打开日志", self._on_log).pack(
             side="left", expand=True, fill="x", padx=(6, 0))
+        # 历史账号：只读下拉（免打字），选中即切（密码走 keyring 恢复）
+        tk.Label(form, text="历史账号", font=DISPLAY, bg=BG, fg=FG_DIM).grid(
+            row=5, column=0, sticky="w", padx=(12, 6), pady=4)
+        self.c_account = ttk.Combobox(form, state="readonly", font=DISPLAY)
+        self.c_account.grid(row=5, column=1, sticky="ew", padx=(0, 12), pady=4)
+        self.c_account.bind("<<ComboboxSelected>>", self._on_switch_account)
+        self._acct_widgets = [w for w in form.grid_slaves(row=5)]
         form.columnconfigure(1, weight=1)
 
         # 网络设置（通用化：适配新学校不必碰 config.ini；常用 4 项 + 高级折叠）
@@ -107,6 +114,14 @@ class Shell(tk.Tk):
         self._labeled(net, "探测间隔", "e_interval", 1)
         self._labeled(net, "探测超时", "e_ptimeout", 2)
         self._labeled(net, "绑定网卡", "e_bindip", 3)
+        # 自动重连开关：关 = 只探测报状态、掉线不自动登录（手动「立即检测重连」
+        # 仍可放行一次）。做成按钮而非 Checkbutton+tk.Variable：多 Tk 根环境下
+        # Variable 晚于根销毁会在解释器退出期触发 Tcl_AsyncDelete（实测 exit 3）。
+        row_auto = tk.Frame(net, bg=BG)
+        row_auto.grid(row=4, column=0, columnspan=3, sticky="ew", padx=12, pady=(4, 2))
+        self._auto_on = True
+        self._btn_auto = self._button(row_auto, "", self._toggle_auto)
+        self._btn_auto.pack(fill="x", expand=True)
         # 高级设置：常驻隐藏小窗（建时 withdraw；开=deiconify，关=withdraw）。
         # 内嵌展开会把主面板撑出屏幕（截图实测 1057px），独立小窗与辅助窗
         # 模型一致且字段常驻，关窗不丢编辑内容。
@@ -183,6 +198,8 @@ class Shell(tk.Tk):
         self._banner.pack(fill="x", padx=20, pady=(20, 0), before=self.btns)
         self.card.pack_forget()          # 向导期隐藏状态仪表（还没有守护）
         self.telemetry.pack_forget()
+        for w in self._acct_widgets:     # 历史切换依赖运行中的守护，向导期不适用
+            w.grid_remove()
         self.e_server.delete(0, "end")   # 不预填任何学校域名：靠自动探测/手填
         self.e_user.focus_set()
         self._auto_detect()              # 少填：门户地址自动探测（未认证劫持页自报）
@@ -215,6 +232,36 @@ class Shell(tk.Tk):
             self._adv_win.deiconify()
             self._adv_win.lift()
 
+    def _toggle_auto(self) -> None:
+        """开关只改本地待保存态（与其它设置字段一致：点「保存设置」才生效）。"""
+        self._auto_on = not self._auto_on
+        self._render_auto()
+
+    def _render_auto(self) -> None:
+        # 状态双通道表达：符号 ●/○ + 文字（关/开）——颜色不单独承载语义
+        mark, word = ("●", "开") if self._auto_on else ("○", "关")
+        self._btn_auto.config(text=f"掉线自动重连 {mark}（当前：{word}）")
+
+    def _on_switch_account(self, _event=None) -> None:
+        """历史账号选中 → 切账号（密码从 keyring 还原；取不到则拒绝切换并
+        提示补密，绝不把旧账号密码带进新账号）。表单账号/服务器一律回显
+        选中项，失败时用户直接补密码点保存。"""
+        user = self.c_account.get().strip()
+        if not user:
+            return
+        try:
+            ok, msg = self.kernel.switch_account(user)
+        except Exception as exc:  # noqa: BLE001 切换异常也要说人话
+            ok, msg = False, f"切换失败：{exc}"
+        server = next((s for u, s in self._accounts if u == user), "")
+        self.e_user.delete(0, "end")
+        self.e_user.insert(0, user)
+        if server:
+            self.e_server.delete(0, "end")
+            self.e_server.insert(0, server)
+        self._detect_hint.config(text=msg,
+                                 fg="#63b073" if ok else "#d1a54a")
+
     # 设置页字段 → cfg 键映射（数字字段空值=不改；字符串空值=清除/自动）
     _SETTING_FIELDS = [
         ("campus_dns", "e_dns", False), ("interval", "e_interval", True),
@@ -244,6 +291,25 @@ class Shell(tk.Tk):
             val = str(cfg.get(_key, "")) if not isinstance(e, ttk.Combobox) else \
                 ("true" if str(cfg.get(_key, "false")).lower() == "true" else "false")
             e.insert(0, val)
+        self._auto_on = str(cfg.get("auto_reconnect", "true")).lower() == "true"
+        self._render_auto()
+        # 历史账号下拉（免打字）：密码走 keyring 恢复，选中即切（见
+        # _on_switch_account）。历史直接读 ini [accounts] 段（只读、容错，
+        # 读失败=空列表不阻塞面板），不经内核：避免为 UI 细节扩张协议。
+        try:
+            from .keeper_paths import read_ini
+            parser = read_ini()
+            self._accounts = []
+            if parser.has_section("accounts"):
+                for _k, val in parser.items("accounts"):
+                    if "|" not in val:
+                        continue
+                    u, _, s = val.partition("|")
+                    if u.strip():
+                        self._accounts.append((u.strip(), s.strip()))
+        except Exception:  # noqa: BLE001 历史读失败不阻塞面板
+            self._accounts = []
+        self.c_account.config(values=[u for u, _ in self._accounts])
 
     def _on_save_settings(self) -> None:
         values: dict[str, str] = {}
@@ -260,6 +326,7 @@ class Shell(tk.Tk):
             if numeric and not v:
                 continue  # 数字字段留空 = 保持原值
             values[key] = v
+        values["auto_reconnect"] = "true" if self._auto_on else "false"
         # bind_ip 非法（IPv6/乱填）会让全链路静默不通，写盘前拦下（P2-9）
         from keeper import validate_bind_ip
         if not validate_bind_ip(values.get("bind_ip", "")):

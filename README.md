@@ -94,6 +94,7 @@ campus_dns =                         # 校园网 DNS（留空走系统 DNS；填
 probe_timeout = 3                    # 探测超时秒数（1~15）
 login_timeout = 0                    # 登录超时秒数；0=自适应 max(6, 2×probe_timeout)，慢门户可调大
 interval = 3                         # 探测周期秒数（钳制 1~300）
+auto_reconnect = true                # false=只探测报状态、掉线不自动登录（面板"掉线自动重连"开关；"立即检测重连"按钮仍可单次手动触发）
 reject_backoff = 600                 # 硬错误（密码/额度）退避秒数（60~86400）
 transient_backoff = 30               # 瞬态错误（时段切换竞态）短退避（5~600）
 portal_down_wait = 30                # 认证服务器不可达时等待秒数（5~600）
@@ -107,6 +108,15 @@ flux_path = /ac_portal/userflux       # 查流量端点（异校不同路径时�
 probe_path = /generate_204            # 在线探测路径（锚点不提供此路径时改这里）
 probe_host = connect.rom.miui.com     # 204 探测的 Host 头（自定义锚点且校验 Host 时改）
 user_agent = Mozilla/5.0 ...         # 部分门户校验 UA
+
+[accounts]
+# 多账号历史（面板自动维护，也可手改）。序号=最近使用顺序（1 最新），
+# 值=账号|服务器；切换在面板「历史账号」下拉选中即切，当前账号以
+# [keeper] username 为准。
+# 密码**不进 ini**——按用户名存 Windows 凭据管理器（同主凭据机制），
+# keyring 不可用时该历史账号切换会提示补密，不会拿旧账号密码去登。
+# 1 = 20231234|https://portal.example.edu
+# 2 = 20231235|https://portal.example.edu
 
 [form]
 # 各校 ac_portal 表单差异字段（可选），会覆盖/扩展默认表单 opr=pwdLogin。

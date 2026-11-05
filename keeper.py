@@ -70,6 +70,7 @@ DEFAULTS = {
     "probe_timeout": "3",
     "login_timeout": "0",  # 0 = 自适应 max(6, 2×probe_timeout)（P1-7）
     "interval": "3",
+    "auto_reconnect": "true",  # false = 只探测报状态，不自动登录（面板可开关）
     "reject_backoff": "600",
     "transient_backoff": "30",
     "portal_down_wait": "30",
@@ -721,6 +722,7 @@ class Keeper:
         self.net_lock = threading.Lock()  # _portal_target 缓存跨线程保护（P1-3 已接线）
         self.force_evt = threading.Event()
         self.stop_evt = threading.Event()
+        self._manual_pending = False  # 下次唤醒是否用户显式意图（放行登录，auto_reconnect 关时仍有效）
         self.state_listeners = []  # 多播（审查 P2-30：面板 on_change 不得顶掉托盘 refresh）
         self._derive_runtime()
         self._resolve_bind_ip()
@@ -729,6 +731,10 @@ class Keeper:
         """cfg → 运行时参数（钳位/表单）。__init__ 与 apply_config 共用，
         保证热重载与冷启动推导出完全一致的状态（单一来源）。"""
         cfg = self.cfg
+        # 自动重连开关：仅显式 true 开启——0/off/no/乱填一律视为关
+        # （保守方向：不确定时绝不擅自登录）
+        self.auto_reconnect = (str(cfg.get("auto_reconnect", "true"))
+                               .strip().lower() == "true")
         self.form = {**FORM_BASE, "userName": cfg["username"], "pwd": cfg["password"],
                      **load_form_extras()}
 
@@ -768,7 +774,9 @@ class Keeper:
             self._portal_ip = ""   # server/campus_dns 可能变了，缓存作废
             self._portal_ip_at = 0.0
         self._resolve_bind_ip()
-        self.request_reconnect()
+        # 立即触发一次重连让新配置上岗；但关闭自动重连时不放行登录
+        # （否则"刚关开关就被保存动作又登一次"）。
+        self.request_reconnect(manual=self.auto_reconnect)
 
     def add_state_listener(self, cb) -> None:
         self.state_listeners.append(cb)
@@ -1104,6 +1112,8 @@ class Keeper:
     def describe_state(self) -> str:
         if self.state == "online":
             return "在线"
+        if self.state == "paused":
+            return "自动重连已关闭"
         if self.state == "rejected":
             return f"登录被拒：{self._reject_reason}（退避中）"
         if self.state == "portal_down":
@@ -1112,16 +1122,25 @@ class Keeper:
             return "启动中，正在首次检测"
         return self.state  # 未知状态兜底，避免拼出 None
 
-    def request_reconnect(self) -> None:
-        """用户主动"立即检测重连"：清退避与熔断计数后立即探测（审查 P1-14）。"""
+    def request_reconnect(self, manual: bool = True) -> None:
+        """用户主动"立即检测重连"：清退避与熔断计数后立即探测（审查 P1-14）。
+
+        manual=False 用于配置热载：auto_reconnect 已关时不该把刚关的开关
+        又"手动放行"一次登录（用户显式意图=manual=True）。
+        """
         self.reject_until = 0.0
         self.suspect = 0
         self.transient_streak = 0
         self.extra_wait = 0.0
+        self._manual_pending = manual
         self.force_evt.set()
 
-    def tick(self) -> None:
-        """一次探测周期：三层判定 + L2 策略层观察 + 按需登录 + 登录风暴熔断。"""
+    def tick(self, manual: bool = False) -> None:
+        """一次探测周期：三层判定 + L2 策略层观察 + 按需登录 + 登录风暴熔断。
+
+        manual=True（用户点「立即检测重连」）放行登录；周期 tick 受
+        auto_reconnect 开关约束。
+        """
         if self.probe_online():
             # L1 通 ≠ 完全在线：出口 DPI 可能拦大众站（2026-11-04 实测）。
             # 受限是"观察态"：状态仍 online（认证没掉），仅日志留痕，绝不自动干预。
@@ -1167,6 +1186,12 @@ class Keeper:
                     with self.net_lock:
                         self._portal_ip = ""   # 换源后重解析门户
                         self._portal_ip_at = 0.0
+            return
+        # 自动重连开关（面板可切）：关闭 = 只探测报状态，不自动登录。
+        # 放在 portal_alive 之后：门户挂了照样如实显示，只是不去救。
+        # manual（用户点「立即检测重连」/保存凭据）不受开关限制——显式意图放行。
+        if not manual and not self.auto_reconnect:
+            self.set_state("paused", self._reject_reason or "自动重连已关闭")
             return
         if time.monotonic() < max(self.reject_until, self._frozen_until):
             # 退避期间展示最近被拒原因（原因存 _reject_reason，与状态解耦：
@@ -1252,13 +1277,15 @@ class Keeper:
         except Exception as exc:  # noqa: BLE001 单次探测异常不中断守护
             self.log.error("tick 异常（继续守护）: %s", exc)
         while not self.stop_evt.is_set():
-            self.force_evt.wait(self.interval + self.extra_wait)
+            forced = self.force_evt.wait(self.interval + self.extra_wait)
             self.force_evt.clear()
+            manual = forced and self._manual_pending  # 事件唤醒也可能来自配置保存
+            self._manual_pending = False
             self.extra_wait = 0.0
             if self.stop_evt.is_set():
                 break
             try:
-                self.tick()
+                self.tick(manual=manual)
             except Exception as exc:  # noqa: BLE001 单次探测异常不中断守护
                 self.log.error("tick 异常（继续守护）: %s", exc)
 
@@ -1281,6 +1308,7 @@ TRAY_COLORS = {
     "offline": (209, 145, 63),
     "portal_down": (209, 145, 63),
     "rejected": (208, 95, 82),
+    "paused": (139, 145, 155),
     "starting": (139, 145, 155),
 }
 
@@ -1354,7 +1382,8 @@ class Tray:
             pass
 
     def on_force(self, icon, item) -> None:
-        self.keeper.force_evt.set()
+        # 与面板「立即检测重连」同一实现：清退避、标记手动意图
+        self.keeper.request_reconnect()
 
     def on_portal(self, icon, item) -> None:
         webbrowser.open(self.keeper.cfg["server"])

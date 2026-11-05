@@ -62,7 +62,8 @@ class KeeperFacade:
     def snapshot(self) -> dict:
         k = self.k
         remain = max(0, int(k.reject_until - time.monotonic()))
-        state = k.state if k.state in ("online", "portal_down", "rejected") else (
+        state = k.state if k.state in ("online", "portal_down", "rejected",
+                                       "paused") else (
             "starting" if k.state == "starting" else "offline")
         return {"state": state, "detail": k.state_detail,
                 "interval": k.interval, "reject_remaining": remain}
@@ -106,7 +107,25 @@ class KeeperFacade:
         if has_new_pwd:
             disk["password"] = stored
         save_config(disk)
+        from shell.accounts import remember_account
+        remember_account(username, server)
         k.request_reconnect()  # 改完立即用新凭据重连（审查 P1-14）
+
+    def switch_account(self, username: str) -> tuple[bool, str]:
+        """切换历史账号：密码按用户名从 keyring 还原（旧账号密码绝不跟过来——
+        save_credentials 的"留空=不改"语义在这里是陷阱，必须先取到再保存）。"""
+        from shell.accounts import list_accounts
+        entry = next((a for a in list_accounts() if a[0] == username), None)
+        if entry is None:
+            return False, f"账号 {username} 不在历史列表"
+        from shell.credentials import load_password
+        pwd = load_password(username)
+        if not pwd:
+            return False, (f"{username} 的密码不在凭据管理器（或曾明文降级已失效），"
+                           "请填写密码后点「保存并立即测试」")
+        server = entry[1] or str(self.k.cfg.get("server", ""))
+        self.save_credentials(username, pwd, server)
+        return True, f"已切换到 {username}，正在用已存凭据重连"
 
     def get_settings(self) -> dict:
         return dict(self.k.cfg)
@@ -159,6 +178,11 @@ class SetupFacade:
         cfg = load_config()  # 增量：基于现有配置改，不重建（审查 P1-11）
         cfg.update({"username": username, "server": server, "password": stored})
         save_config(cfg)
+        from shell.accounts import remember_account
+        remember_account(username, server)
+
+    def switch_account(self, username: str) -> tuple[bool, str]:
+        return False, "首次配置不支持切换账号"
 
     def get_settings(self) -> dict:
         return load_config()

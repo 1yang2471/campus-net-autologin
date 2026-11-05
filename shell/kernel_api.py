@@ -14,6 +14,7 @@ STATE_LABELS = {
     "offline": "离线，自动重连中",
     "portal_down": "认证服务器不可达",
     "rejected": "登录被拒",
+    "paused": "自动重连已关闭",
     "starting": "启动中",
 }
 
@@ -23,6 +24,7 @@ STATE_COLORS = {
     "offline": "#d1913f",
     "portal_down": "#d1913f",
     "rejected": "#d05f52",
+    "paused": "#8b919b",
     "starting": "#8b919b",
 }
 
@@ -48,6 +50,11 @@ class Kernel(Protocol):
 
     def save_credentials(self, username: str, password: str, server: str) -> None:
         """保存配置（v1.0 起 keyring 存密码，ini 存其余）。"""
+        ...
+
+    def switch_account(self, username: str) -> tuple[bool, str]:
+        """切到历史账号（ini [accounts]）：成功返回 (True, 已切换)，失败返回
+        (False, 原因)——密码从 keyring 按用户名还原，取不到必须拒绝切换。"""
         ...
 
     def test_credentials(self, username: str, password: str, server: str) -> tuple[bool, str]:
@@ -118,6 +125,9 @@ class MockKernel:
     def save_credentials(self, username: str, password: str, server: str) -> None:
         self._detail = f"已保存（演示）：{username} @ {server}"
         self._state = "online"
+
+    def switch_account(self, username: str) -> tuple[bool, str]:
+        return True, f"已切换（演示）：{username}"
 
     def test_credentials(self, username: str, password: str, server: str) -> tuple[bool, str]:
         return True, "演示环境：凭据校验通过"
