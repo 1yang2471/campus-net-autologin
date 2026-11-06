@@ -3252,8 +3252,10 @@ def _fake_socket(has_v6, connect_ok):
 
 
 def t39_ipv6_probe_three_states():
-    """probe_ipv6 三态（汕大 2026-11-06 实测：v6 不经 portal，观察不判定）：
-    无 v6 路由→None（不误报）；有 v6 可达→True；有 v6 出不去→False。"""
+    """probe_ipv6 三态。读数语义要注意：本方法**故意不绑物理源**，真机 TUN 在跑时
+    会选出 fdfe: 隧道源，返回的 True/False 描述的是隧道而非校园 v6——绑源改造在
+    双栈修复里（规格 E7/§5.1），届时"选不出校园源"要报"不可观测"而不是 False。
+    无 v6 路由→None（不误报）；公网 v6 TCP 可达→True；有 v6 但不通→False。"""
     import keeper as _k
     import time as _t
     k = _k.Keeper(_cfg())
@@ -3357,6 +3359,35 @@ def t40_login_rate_ceiling_per_rolling_hour():
 
 
 check("滚动一小时登录次数≤上限", t40_login_rate_ceiling_per_rolling_hour)
+
+print("== 循环41：对外结论不得说谎（已发布 v6 错误口径守卫）==")
+
+# 2026-11-06 晚实测推翻的说法：门户**有** v6 侧查询入口（IP 字面量，故域名无
+# AAAA 推不出"无门"，E9）；登录带 ipv4or6 即可把 v6 绑进会话（E4，实测
+# isOnline 由 false 翻 true 并稳定）。所以"重登救不了 v6 / 无从登录"是对外假话。
+FORBIDDEN_V6_CLAIMS = (
+    "重登救不了 v6",
+    "没有可登录的 v6 入口",
+    "v6 没有可登录的入口",
+    "不做 v6 重登（无从登）",
+    "没有「v6 登录」这扇门",
+    "v6 不经 portal 认证",
+    "portal 会话表按源 IPv4 管理",
+)
+
+
+def t41_no_falsified_v6_claims_shipped():
+    """README 与 keeper 的帮助文案里不得残留已被实测推翻的 v6 结论。"""
+    from pathlib import Path
+    root = Path(__file__).resolve().parent
+    offenders = []
+    for name in ("README.md", "keeper.py"):
+        text = (root / name).read_text(encoding="utf-8")
+        offenders += [(name, claim) for claim in FORBIDDEN_V6_CLAIMS if claim in text]
+    assert not offenders, f"对外仍在说假话: {offenders}"
+
+
+check("已发布 v6 错误口径已清除", t41_no_falsified_v6_claims_shipped)
 
 print(f"\n结果: PASS={len(PASS)} FAIL={len(FAIL)} SKIP={len(SKIP)}"
       + ("（真实门户项未启用）" if not LIVE and SKIP else ""))
