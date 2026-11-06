@@ -36,6 +36,7 @@
 | E22 | 反向情形同样成立：若某校内网真的路由 28/8（IANA 公网段，校园内网直接用它并不罕见），现过滤器会把它的真实物理源一并排除，`discover_physical_ip` 退回首个适配地址 → TUN 下探测全量失真且无从诊断 | 审查 P1-4 的**担忧是真的**，只是它给的修法会炸参考校；两个方向都成立的解法只能是行为校验，不能是前缀表 |
 | E23 | 绑候选源问校园 DNS 实测：`172.29.153.208 → 1.1.1.2`（真实门户 IP），TUN 的 `28.0.0.1 → 28.0.0.135`（fake-ip）——**两个源都应答**，只是内容不同 | 我上一稿的"能不能应答"判据作废（被 E23 自证伪）：TUN 也答得漂漂亮亮。正确判据只能是"应答的是不是门户"，复用产品已有的 `ac_portal`/`pwdLogin` 指纹校验（§11.5 v2） |
 | E24 | 绑源 GET 门户登录页验指纹：物理源 `172.29.153.208` → `HTTP=200`、2048 字节、指纹**未命中**；TUN 源 `28.0.0.1` → `HTTP=200`、2048 字节、指纹**也未命中**（本机登录页 14212 字节，前 2KB 内没有 `ac_portal`/`pwdLogin`） | 我的 §11.5 v2 判据被自己下一步实测否证；同时暴露既有缺陷：`physical_http` 的 2048 字节截断使 `keeper.py:360` 的登录页指纹判据在参考校永不为真，凡依赖它的路径都失灵（单列待修） |
+| E25 | `Get-NetAdapter`：WLAN 描述 = `Realtek 8852BE Wireless LAN WiFi 6 PCI-E NIC`，FlClash 描述 = **`Meta Tunnel`**；但 `Win32_NetworkAdapter.InterfaceType` 返回空、`PhysicalAdapter` 对 Meta Tunnel 报 **True** | "用系统自带的物理标志区分隧道"当场是假的。可用信号是**驱动声明的适配器描述**（含 `Tunnel`）——它既不绑学校也不绑代理软件名，同时了结 E21 与 E22 两个相反方向。见 §11.6 v3 |
 
 ## 2. 目标与非目标
 
@@ -427,6 +428,32 @@ E24 还顺带暴露一个**与物理源无关的既有缺陷**：`physical_http`
    README 那条说明维持有效。
 
 判据定了之后再补用例（当前无可验证判据，先写用例就是照着猜测固化错误行为）。
+
+### 11.6 已量到可用结构信号（取代 §11.5 的冻结状态，v3）
+
+E25 实测：`Get-NetAdapter` 给出 `ifIndex 10 WLAN 2 = Realtek 8852BE Wireless LAN WiFi 6 PCI-E NIC`、
+`ifIndex 36 FlClash = **Meta Tunnel**`；而 `Win32_NetworkAdapter` 的 `InterfaceType` **返回空**、
+`PhysicalAdapter` 对 Meta Tunnel **报 True**。两个"看起来最正规"的判据当场是假的：
+
+- ❌ 用 `PhysicalAdapter`/`InterfaceType` 区分物理与隧道——TUN 自称物理设备；
+- ❌ 按适配器**名字**过滤（现有 `VIRTUAL_NIC` 的做法）——名字是用户起的（`FlClash`），
+  里面没有任何关键词，所以这条防线一直在漏，才让 `"28."` 前缀成了唯一挡箭牌。
+
+✅ 可用信号是**驱动声明的适配器描述**：`Meta Tunnel` 含 `tunnel`，而真实无线网卡描述含
+`Wireless LAN`/`GbE Family Controller`。它由驱动作者写死、不由用户配置，因此既不绑学校
+也不绑具体代理软件名，同时解决 E21（本机 TUN 用 28. 必须排除）与 E22（他校内网用 28./8
+不得被误排除）两个相反方向。
+
+落地要点（下一步实现时照此，别再猜）：
+
+1. 数据源用 `GetAdaptersAddresses`（ctypes，`AdapterDescription` 字段），
+   **不要**为守护起 PowerShell 子进程；`psutil.net_if_addrs()` 只有名字，不够。
+2. 描述命中隧道词汇（`tunnel|tap|wintun|meta|vpn|dummy|bridge|vmnet`）→ 该适配器地址不作候选；
+   命中不了就**不**据此放行，仍走现有 DNS 应答校验（`lan_probe_address`）作为第一道。
+3. `"28."` 前缀**暂时保留**，直到 1-2 的用例与本机实测都通过再摘——摘早了就是回归。
+4. 用例：a) 描述含 "Meta Tunnel" 的适配器上的 28.0.0.1 必须落选；
+   b) 描述含 "Wireless LAN" 且地址是 28.1.2.3 的候选必须入选（这条正是 E22 那所假想学校）；
+   c) 拿不到适配器描述（API 失败）时行为等于现状，绝不因此选中隧道源。
 
 ## 12. 风险与待决
 
