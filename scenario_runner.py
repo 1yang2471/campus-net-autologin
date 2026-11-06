@@ -145,7 +145,7 @@ def run_scenario(path: str) -> list[str]:
             resp = step.get("response", "")
             expect = step.get("expect", {})
             opr = req.get("opr")
-            if opr == "DUALSTACKQUERY":
+            if opr == "ipv4or6online":
                 got = interpret_handshake(resp)
                 m = parse_portal(resp)
                 # 只有对端步（expect=peerState）才更新 peer_ip——self(v4) 步的
@@ -204,6 +204,10 @@ def run_scenario(path: str) -> list[str]:
                     fails.append(
                         f"{name} step{i}: 模拟门户实测 success={got_ok} "
                         f"与语料应答解释 {ok} 不一致")
+            else:
+                fails.append(
+                    f"{name} step{i}: 裁判不认识的 opr {opr!r}——"
+                    "语料扩了新操作必须同步裁判")
     finally:
         if srv is not None:
             srv.shutdown()
