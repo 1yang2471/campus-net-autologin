@@ -12,6 +12,8 @@ keeper.log*
 venv/
 dist/
 build/
+/dist-1.0.11/
+/build-tmp/
 *.spec
 pyi.log
 
