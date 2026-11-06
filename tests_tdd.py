@@ -3214,6 +3214,94 @@ def t38b_free_window_silences_offline_path_and_freeze():
 
 
 check("免认证时段离线路径静默+冻结不自愈", t38b_free_window_silences_offline_path_and_freeze)
+
+print("== 循环39：IPv6 出口观察 + 熔断停时校准 ==")
+
+
+def _fake_socket(has_v6, connect_ok):
+    """构造假 socket 模块行为：has_v6=有无全局 v6 路由；connect_ok=v6 TCP 通不通"""
+    class _Err(OSError):
+        pass
+
+    class FakeSock:
+        def __init__(self, fam, typ):
+            self.fam = fam
+            self.typ = typ
+            self.timeout = None
+        def settimeout(self, t):
+            self.timeout = t
+        def connect(self, addr):
+            host = addr[0]
+            if not has_v6:
+                raise _Err("no route")
+            if self.typ == 2:                       # SOCK_DGRAM：选源
+                self._src = "2001:250:3003::1"
+            else:                                  # SOCK_STREAM：出口探测
+                if not connect_ok:
+                    raise _Err("unreachable")
+        def getsockname(self):
+            return (getattr(self, "_src", "fe80::1"), 0, 0, 0)
+        def close(self):
+            pass
+    mod = type(sys)("fake_socket")
+    mod.AF_INET6 = 23
+    mod.SOCK_DGRAM = 2
+    mod.SOCK_STREAM = 1
+    mod.socket = FakeSock
+    return mod
+
+
+def t39_ipv6_probe_three_states():
+    """probe_ipv6 三态（汕大 2026-11-06 实测：v6 不经 portal，观察不判定）：
+    无 v6 路由→None（不误报）；有 v6 可达→True；有 v6 出不去→False。"""
+    import keeper as _k
+    import time as _t
+    k = _k.Keeper(_cfg())
+    old = _k.socket
+    try:
+        _k.socket = _fake_socket(has_v6=False, connect_ok=False)
+        assert k.probe_ipv6() is None, "无 v6 路由必须报 None 而非 False"
+        _k.socket = _fake_socket(has_v6=True, connect_ok=True)
+        assert k.probe_ipv6() is True
+        _k.socket = _fake_socket(has_v6=True, connect_ok=False)
+        assert k.probe_ipv6() is False
+    finally:
+        _k.socket = old
+
+
+def t39_ipv6_observation_never_affects_offline():
+    """v6 观察绝不参与掉线判定（v4 会话是认证主线）：v6 全灭时 v4 正常
+    仍是在线；且 detail 提示「IPv6 不可达」；DPI 窗口+v6 可达要联合提示。"""
+    import keeper as _k
+    import time as _t
+    k = _k.Keeper(_cfg())
+    k.probe_online = lambda: True
+    k.probe_l2_restricted = lambda: False
+    k.probe_ipv6 = lambda: False
+    k.fetch_flux = lambda: {"用户名称": "u"}
+    k._l2_at = 0.0
+    k.tick()
+    assert k.state == "online", "v6 不可达绝不能判掉线"
+    assert "IPv6 不可达" in k.state_detail, k.state_detail
+    k.probe_ipv6 = lambda: True
+    k.probe_l2_restricted = lambda: True
+    k._l2_at = 0.0
+    k.tick()
+    assert "DPI" in k.state_detail and "IPv6 可达" in k.state_detail, \
+        f"DPI×v6 联合提示缺失: {k.state_detail!r}"
+
+
+def t39_login_cap_is_15_minutes():
+    """熔断停时校准（2026-11-06 下午 37 次重登零冻结 vs 5 次 1 小时停摆）：
+    停 15 分钟——降速而非停摆，防冻结主防线仍是 30s 节流+退避。"""
+    import keeper as _k
+    k = _k.Keeper(_cfg())
+    assert k.LOGIN_CAP_S == 900.0, k.LOGIN_CAP_S
+
+
+check("probe_ipv6 三态不误报", t39_ipv6_probe_three_states)
+check("v6 观察不参与掉线+联合提示", t39_ipv6_observation_never_affects_offline)
+check("熔断停时=15分钟", t39_login_cap_is_15_minutes)
 check("自动重登频率熔断（手动不受限）", t38_login_rate_guard_caps_relogin_storm)
 
 print(f"\n结果: PASS={len(PASS)} FAIL={len(FAIL)} SKIP={len(SKIP)}"

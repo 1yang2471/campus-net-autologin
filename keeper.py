@@ -703,10 +703,13 @@ class Keeper:
     # 但也会绕过所有退避立即重登——2026-11-05 02:44-02:50 风暴实测根因。
     # 无论退避怎么抖，两次登录尝试至少间隔 30 秒。
     LOGIN_MIN_INTERVAL = 30.0
-    # 自动重登频率熔断（2026-11-05 夜实测：门户反复踢线 + 守护每次都重登
-    # 成功 → 1 小时 25+ 次登录触发门户反暴力冻结 600s）。手动重连不受限。
+    # 自动重登频率熔断（2026-11-05 夜实测：1 小时 25+ 次登录触发门户反暴力
+    # 冻结）。手动重连不受限。
     LOGIN_OK_CAP = 8            # 1 小时内自动重登成功次数上限
-    LOGIN_CAP_S = 3600.0        # 触发上限后的自动重登熔断时长
+    # 暂停时长 15 分钟（2026-11-06 下午实测校准：6 次/小时重登连续 6 小时
+    # 零冻结，熔断触发 5 次×原 1 小时停机反而造成"长时间无人值班"——熔断
+    # 的职责是降速不是停摆；30s 节流+600s 退避仍是防冻结主防线）
+    LOGIN_CAP_S = 900.0
 
     def __init__(self, cfg: dict) -> None:
         self.cfg = cfg
@@ -734,6 +737,7 @@ class Keeper:
         self._login_ok_times: list[float] = []  # 自动重登成功时刻（频率熔断窗口）
         self._login_cap_until = 0.0     # 自动重登熔断截止（0=未熔断）
         self._cap_detail = ""
+        self._v6_state = None           # IPv6 出口观察（True/False/None，见 probe_ipv6）
         self.extra_wait = 0.0
         self.state = "starting"
         self.state_detail = ""
@@ -933,6 +937,44 @@ class Keeper:
                                  "认证会话正常但出口策略受限（DPI 风控窗口），"
                                  "通常 10-30 分钟自动放行；期间勿反复注销重登", ip, body)
             return True
+        return False
+
+    def probe_ipv6(self):
+        """IPv6 出口观察（与 L2 同拍，60 秒一次）：返回 True/False/None。
+
+        汕大 2026-11-06 实测：v6 走 CERNET2 前缀不经 portal 认证（门户无
+        AAAA 记录，没有「v6 登录」这扇门可连），DPI 把 v4 网页打死时 v6
+        往往是唯一幸存出口——所以它只做观察与提示，绝不参与掉线判定
+        （v4 会话才是认证主线）。
+          None  = 本机没有可用 v6 路由（不上报，避免误报"不通"）
+          True  = 公网 v6 TCP 可达
+          False = 有 v6 地址但出得去存疑（双栈应用走 Happy Eyeballs 会先试
+                  v6 再回落，表现为连接变慢——值得提示）
+        注意：探测故意走系统栈（不绑物理源）——观察的是应用真实会走的
+        路径，包括 TUN 接管的情况。用模块级 socket（测试可替换观察替身）。"""
+        _s = socket
+        try:
+            u = _s.socket(_s.AF_INET6, _s.SOCK_DGRAM)
+            try:
+                u.connect(("2606:4700:4700::1111", 53))  # 选路不出包
+                src = u.getsockname()[0]
+            finally:
+                u.close()
+            if src.startswith("fe80") or src == "::":
+                return None                       # 仅链路本地/无路由=没有 v6
+        except OSError:
+            return None                           # 无 v6 协议栈
+        for host, port in (("2606:4700:4700::1111", 443), ("2400:3200::1", 80)):
+            try:
+                t = _s.socket(_s.AF_INET6, _s.SOCK_STREAM)
+                t.settimeout(self.probe_timeout)
+                try:
+                    t.connect((host, port))
+                    return True
+                finally:
+                    t.close()
+            except OSError:
+                continue
         return False
 
     def _probe_session(self) -> None:
@@ -1253,6 +1295,7 @@ class Keeper:
                 self._l2_at = time.monotonic()
                 self._l2_window_until = (time.monotonic() + 2 * L2_PROBE_S
                                          if self.probe_l2_restricted() else 0.0)
+                self._v6_state = self.probe_ipv6()   # IPv6 观察同拍顺带
             # L1 通 ≠ 认证在线：flux 真值盖章后才点亮（_probe_session 详注）
             self._probe_session()
             if self._session_dead and not self._in_free_window():
@@ -1265,7 +1308,10 @@ class Keeper:
                 if self._in_free_window():
                     detail = "免认证时段（无需登录）"
                 elif time.monotonic() < self._l2_window_until:
-                    detail = "DPI 风控窗口：网页打不开勿重登（认证正常）"
+                    detail = ("DPI 风控窗口（认证正常，勿重登）"
+                              + (" · IPv6 可达" if self._v6_state is True else ""))
+                elif self._v6_state is False:
+                    detail = "IPv6 不可达（双栈应用可能变慢）"
                 self.set_state("online", detail)  # 网络自愈时也须点亮（审查 P0-4：原缺此句致卡红）
                 # 冻结闸门自愈（2026-11-05 实战）：用户手动登录/网络真恢复后
                 # probe 连续 3 次在线，闸门自动解除，守护不再压着装死。
@@ -1353,7 +1399,8 @@ class Keeper:
                     self._login_ok_times = []
                     self.log.warning("1 小时内自动重登成功 %s 次——门户可能在反复踢线"
                                      "（如加速器被行为管理识别）或 flux 端点劣化，"
-                                     "自动重登暂停 1 小时", self.LOGIN_OK_CAP)
+                                     "自动重登暂停 %d 分钟", self.LOGIN_OK_CAP,
+                                     int(self.LOGIN_CAP_S / 60))
                     self.set_state("offline", self._cap_detail)
                     return
             # 重连成功即解除 flux 判死；门户答「您已在线」而我等探针刚判死

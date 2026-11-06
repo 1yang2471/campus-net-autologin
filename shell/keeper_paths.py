@@ -29,7 +29,7 @@ LOG_FILE: Path = BASE_DIR / "keeper.log"
 # 版本常量：面板标题/启动日志/冒烟取证三处消费（trouble-maker P0：v1.0.4
 # 前无任何版本指纹，用户无法分辨运行的是哪个构建——"看起来没修好"的根因）
 APP_NAME = "campus-net-autologin"
-APP_VERSION = "1.0.9"
+APP_VERSION = "1.0.10"
 
 
 def read_ini() -> configparser.ConfigParser:
