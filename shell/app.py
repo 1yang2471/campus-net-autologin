@@ -17,8 +17,8 @@ from tkinter import messagebox, ttk
 
 from .kernel_api import STATE_COLORS, STATE_LABELS  # noqa: E402
 from .keeper_paths import LOG_FILE, APP_VERSION  # noqa: E402
-from .theme import (BG, PANEL, PANEL_EDGE, PANEL_HOVER, BOUNDARY, FOCUS,  # noqa: E402
-                    FG, FG_DIM, MONO, DISPLAY,
+from .theme import (BG, PANEL, PANEL_EDGE, BOUNDARY, FOCUS,  # noqa: E402
+                    FG, FG_DIM, MONO, DISPLAY, hover_bg,
                     DISPLAY_BOLD, DISPLAY_SMALL, apply_dark_ttk, lamp_photo)
 
 
@@ -202,8 +202,7 @@ class Shell(tk.Tk):
                       takefocus=1)
 
         def _hover(on):
-            if str(b["state"]) == "normal":
-                b.configure(bg=PANEL_HOVER if on else PANEL)
+            b.configure(bg=hover_bg(str(b["state"]), on))
 
         b.bind("<Enter>", lambda _e: _hover(True))
         b.bind("<Leave>", lambda _e: _hover(False))

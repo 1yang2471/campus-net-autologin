@@ -30,6 +30,19 @@ DISPLAY_BOLD = ("Microsoft YaHei UI", 22, "bold")
 DISPLAY_SMALL = ("Microsoft YaHei UI", 9)
 
 
+def hover_bg(state: str, on: bool) -> str:
+    """按钮底色的真相表：禁用态**不随 hover 变**——否则"点不动"和"鼠标在上面"
+    两件事用同一个视觉说，用户分不清按钮是坏了还是在响应。
+
+    单独成函数是为了可判定地测：Tk 的合成 crossing 事件只在真实指针语境下才
+    派发（脚本里 event_generate('<Enter>') 会被丢弃），像素级的悬停反馈无法在
+    CI 里稳定复现——能稳定守住的是这条规则本身，派发层另有用例。
+    """
+    if state != "normal":
+        return PANEL
+    return PANEL_HOVER if on else PANEL
+
+
 def lamp_photo(size: int = 32, rgb: tuple = OK_RGB, master=None):
     """状态灯窗口图标：托盘、面板、辅助窗共用同一盏灯（signature 细节）。
 

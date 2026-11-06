@@ -3498,13 +3498,53 @@ def t43_focus_ring_visible_and_tab_reachable():
         win.destroy()
 
 
-def t44_hover_state_bound_on_buttons():
-    """只有按下态不够：悬停必须有可见反馈（原实现 Enter/Leave 绑定数为 0）。"""
+def t44_hover_rule_and_wiring():
+    """hover 守两层，并诚实承认第三层自动化不了：
+
+    ① 规则层（可判定）：正常态 hover 抬起一档、离开还原、**禁用态不随 hover 变**
+       ——禁用不变色最容易被重构顺手丢掉，而它是区分"点不动"与"鼠标在上面"的
+       唯一手段。
+    ② 接线层：按钮真的绑了 Enter/Leave（规则对了没接上等于没做）。
+    ③ 像素派发层：Tk 的合成 crossing 事件只在真实指针语境下派发，脚本里
+       event_generate('<Enter>') 会被丢弃（实测带坐标也不稳）——这一层交人工
+       悬停确认。硬塞进自动化就是假绿灯。
+    """
+    from shell import theme
+    assert theme.hover_bg("normal", True) == theme.PANEL_HOVER
+    assert theme.hover_bg("normal", False) == theme.PANEL
+    assert theme.hover_bg("disabled", True) == theme.PANEL, "禁用态不得随 hover 变亮"
     win = _tk_shell(_UIKernel())
     try:
         btn = win._button(win, "悬停样本", lambda: None)
-        assert btn.bind("<Enter>"), "按钮没有 hover 绑定"
-        assert btn.bind("<Leave>"), "按钮没有 hover 还原绑定"
+        assert btn.bind("<Enter>"), "按钮没接 hover"
+        assert btn.bind("<Leave>"), "按钮没接 hover 还原"
+    finally:
+        win.destroy()
+
+
+def t44b_tab_traversal_reaches_buttons():
+    """键盘可达要走得完：从输入框沿 tk_focusNext（Tab 的真实路径）能到按钮。
+
+    takefocus 设了但顺序里走不到，等于没设——所以量链路，不量配置项。
+    """
+    import tkinter as tk
+    win = _tk_shell(_UIKernel())
+    try:
+        win.deiconify()
+        win.update()
+        win.e_interval.focus_set()
+        win.update()
+        cur, walked = win.e_interval, []
+        for _ in range(80):
+            nxt = win.tk.call("tk_focusNext", cur._w)
+            if not nxt or nxt == cur._w:
+                break
+            cur = win.nametowidget(nxt)
+            walked.append(cur)
+            if isinstance(cur, tk.Button):
+                break
+        assert any(isinstance(w, tk.Button) for w in walked), (
+            f"Tab 连走 {len(walked)} 站没有一个是按钮＝主要动作键盘够不到")
     finally:
         win.destroy()
 
@@ -3594,7 +3634,8 @@ def t47_log_error_text_meets_body_contrast():
 for _n, _f in (("控件边界对比≥3:1", t42_control_boundary_meets_3to1),
                ("控件真的接上边界 token", t42_widgets_actually_paint_the_boundary),
                ("焦点环可见且 Tab 可达", t43_focus_ring_visible_and_tab_reachable),
-               ("按钮有 hover 态", t44_hover_state_bound_on_buttons),
+               ("hover 规则与接线", t44_hover_rule_and_wiring),
+               ("Tab 走得通到按钮", t44b_tab_traversal_reaches_buttons),
                ("回车可保存设置", t45_return_key_saves_settings),
                ("探测在途按钮锁定防重入", t46_detect_button_locks_while_probing),
                ("日志 ERROR 正文红≥4.5:1", t47_log_error_text_meets_body_contrast)):
