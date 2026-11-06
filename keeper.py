@@ -92,6 +92,13 @@ DEFAULTS = {
 
 FORM_BASE = {"opr": "pwdLogin", "rememberPwd": "1"}
 
+# 状态细节文案的唯一来源：tick 写进 state_detail、托盘/面板各自渲染时都引用
+# 这里，不再各造一句（历史上托盘与面板两套字导致熔断指引在托盘整个看不见）。
+# 措辞纪律：不许出现裸的"勿重登"——补绑/手动重连都是"重登"，同屏一边说勿重登
+# 一边自动发登录，用户会去门户手动注销，那才真延长风控。
+FREE_WINDOW_DETAIL = "免认证时段（无需登录）"
+DPI_WINDOW_DETAIL = "DPI 风控窗口（认证正常，勿手动注销/重登，会自动放行）"
+
 
 def clamp(value: float, low: float, high: float, name: str) -> float:
     """配置数值钳制：越界取边界并告警，避免填错导致脚本异常。"""
@@ -1244,21 +1251,33 @@ class Keeper:
                     pass
 
     def describe_state(self) -> str:
-        if self.state == "online":
+        """托盘/通知的唯一文案源：状态标签 + 同一份 detail，不再平行造句。
+
+        实测缺陷（2026-11-06 晚）：面板 detail 已写"自动重登暂停 15 分钟（可手动
+        重连）"，而这里对 offline 一路落到兜底、直接吐英文状态名 "offline"；
+        online 分支又自带一套 DPI 字，托盘因此看不见 DPI/IPv6 半句话。
+        新增状态请只写 set_state(state, detail)，这里不加分支。
+        """
+        label = {
+            "online": "在线",
+            "offline": "离线",
+            "paused": "自动重连已关闭",
+            "rejected": f"登录被拒：{self._reject_reason}（退避中）",
+            "portal_down": f"认证服务器不可达，"
+                           f"{int(self.portal_down_wait)}秒后重试",
+            "starting": "启动中，正在首次检测",
+        }.get(self.state, self.state)
+        detail = (self.state_detail or "").strip()
+        if not detail and self.state == "online":
+            # 有些路径只设了状态没写 detail（手动改窗口标志、旧调用点）：
+            # 兜底引用同一条常量，托盘不该因此少半句话——但也不另造新句子。
             if self._in_free_window():
-                return "在线（免认证时段）"
-            if time.monotonic() < self._l2_window_until:
-                return "在线（DPI 风控窗口：认证正常，勿重登）"
-            return "在线"
-        if self.state == "paused":
-            return "自动重连已关闭"
-        if self.state == "rejected":
-            return f"登录被拒：{self._reject_reason}（退避中）"
-        if self.state == "portal_down":
-            return f"认证服务器不可达，{int(self.portal_down_wait)}秒后重试"
-        if self.state == "starting":
-            return "启动中，正在首次检测"
-        return self.state  # 未知状态兜底，避免拼出 None
+                detail = FREE_WINDOW_DETAIL
+            elif time.monotonic() < self._l2_window_until:
+                detail = DPI_WINDOW_DETAIL
+        if not detail or detail in label:
+            return label
+        return f"{label}｜{detail}"
 
     def request_reconnect(self, manual: bool = True) -> None:
         """用户主动"立即检测重连"：清退避与熔断计数后立即探测（审查 P1-14）。
@@ -1338,9 +1357,9 @@ class Keeper:
             else:
                 detail = ""
                 if self._in_free_window():
-                    detail = "免认证时段（无需登录）"
+                    detail = FREE_WINDOW_DETAIL
                 elif time.monotonic() < self._l2_window_until:
-                    detail = ("DPI 风控窗口（认证正常，勿重登）"
+                    detail = (DPI_WINDOW_DETAIL
                               + (" · IPv6 可达" if self._v6_state is True else ""))
                 elif self._v6_state is False:
                     detail = "IPv6 不可达（双栈应用可能变慢）"

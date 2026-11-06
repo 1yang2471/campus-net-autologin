@@ -19,6 +19,15 @@ sys.path.insert(0, str(ROOT / "shell"))
 
 LIVE = os.environ.get("CNA_LIVE_TESTS") == "1"
 
+# 本文件是**脚本**：模块级就有 print/check()，import 它会当场跑完整套测试。
+# 已经两次踩这个坑（想借 _cfg() 时 import → 白等三分钟还污染输出）。
+# 与其写进文档靠人记住，不如让它当场报错并给出正确做法。
+if __name__ != "__main__":
+    raise SystemExit(
+        "tests_tdd 是脚本，不要 import。"
+        "要跑测试：python tests_tdd.py；"
+        "要复用 _cfg/UIKernel：把 helpers 抽成独立模块或直接照抄一份。")
+
 PASS = []
 FAIL = []
 SKIP = []
@@ -3640,6 +3649,56 @@ for _n, _f in (("控件边界对比≥3:1", t42_control_boundary_meets_3to1),
                ("探测在途按钮锁定防重入", t46_detect_button_locks_while_probing),
                ("日志 ERROR 正文红≥4.5:1", t47_log_error_text_meets_body_contrast)):
     check(_n, _f)
+
+print("== 循环43：托盘与面板必须同一份真相 ==")
+
+
+def _t43_keeper():
+    import keeper
+    cfg = dict(keeper.DEFAULTS)
+    cfg.update({"username": "u", "password": "p",
+                "server": "https://portal.example.edu",
+                "campus_dns": "10.0.0.1", "bind_ip": "192.0.2.7"})
+    return keeper.Keeper(cfg)
+
+
+def t43_tray_shows_breaker_guidance():
+    """熔断时托盘必须说人话。实测（2026-11-06 晚）：面板 detail 已是
+    "自动重登暂停 15 分钟（可手动重连）"，托盘 describe_state() 却直接回
+    英文状态名 "offline"——用户看托盘以为程序挂了，看不出还能手动救。"""
+    k = _t43_keeper()
+    k.set_state("offline", "门户在反复踢线，自动重登暂停 15 分钟（可手动重连）")
+    text = k.describe_state()
+    assert "可手动重连" in text, f"托盘丢了熔断指引: {text!r}"
+    assert text != "offline", f"托盘直接吐英文状态名: {text!r}"
+
+
+def t43_tray_carries_dpi_and_v6_detail():
+    """在线但有 DPI / IPv6 细节时，托盘不得只剩"在线"两字：面板吃
+    state_detail、托盘吃另一套硬编码字，同一件事两张嘴必然漂移——
+    而托盘才是用户平时瞥的那个。"""
+    k = _t43_keeper()
+    k.set_state("online", "DPI 风控窗口（认证正常，勿手动注销/重登）· IPv6 不可观测")
+    text = k.describe_state()
+    assert "DPI" in text, f"托盘未反映出口管控: {text!r}"
+    assert "IPv6" in text, f"托盘未反映 v6 状态: {text!r}"
+
+
+def t43_no_bare_dont_relogin_phrase():
+    """文案纪律：不许再有裸的"认证正常，勿重登"。补绑和手动重连都是"重登"，
+    同屏一边说勿重登、一边自动发登录，用户会以为守护失职去门户注销——
+    那才真延长风控。要说就得说清"勿手动注销/重登"。"""
+    root = Path(__file__).resolve().parent
+    banned = ("认证正常，勿重登", "打不开勿重登")
+    hits = [(n, b) for n in ("keeper.py", "README.md")
+            for b in banned
+            if b in (root / n).read_text(encoding="utf-8")]
+    assert not hits, f"存在与自动补绑自相矛盾的裸文案: {hits}"
+
+
+check("托盘显示熔断手动指引", t43_tray_shows_breaker_guidance)
+check("托盘带 DPI 与 IPv6 细节", t43_tray_carries_dpi_and_v6_detail)
+check("裸「勿重登」文案已清除", t43_no_bare_dont_relogin_phrase)
 
 print(f"\n结果: PASS={len(PASS)} FAIL={len(FAIL)} SKIP={len(SKIP)}"
       + ("（真实门户项未启用）" if not LIVE and SKIP else ""))
