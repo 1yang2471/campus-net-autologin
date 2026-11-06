@@ -451,7 +451,19 @@ E25 实测：`Get-NetAdapter` 给出 `ifIndex 10 WLAN 2 = Realtek 8852BE Wireles
 2. 描述命中隧道词汇（`tunnel|tap|wintun|meta|vpn|dummy|bridge|vmnet`）→ 该适配器地址不作候选；
    命中不了就**不**据此放行，仍走现有 DNS 应答校验（`lan_probe_address`）作为第一道。
 3. `"28."` 前缀**暂时保留**，直到 1-2 的用例与本机实测都通过再摘——摘早了就是回归。
-4. 用例：a) 描述含 "Meta Tunnel" 的适配器上的 28.0.0.1 必须落选；
+4. **失败必须关闭（fail closed）**：适配器描述来源若拿不到（API 失败、权限、返回空表），
+   **一律沿用现状的 `28.`/`198.1x.` 前缀过滤**，绝不允许"没检测到隧道网卡"被读成
+   "本机没有隧道网卡"。这条不是保守——E26 的实测就是这个坑：按 winreg
+   （`Control\Class\{4d36e972…}\NNNN` 的 `DriverDesc`+`NetCfgInstanceId`，
+   `Services\<驱动>\NetworkAdapter\{guid}` 的 `*Index`）联表，**返回空映射**，
+   而同一时刻 `Get-NetAdapter` 明明能读出 `ifIndex 36 = Meta Tunnel`。
+   拿这样的空结果去摘前缀，等于主动把 TUN 当物理源。
+5. 数据源仍未定：✅ `Get-NetAdapter`（实测可用，但为守护起 PowerShell 子进程不想要）；
+   ❌ winreg 联表（本机实测空，键假设不成立，未深究原因）；❓ `GetAdaptersAddresses`
+   ctypes（`IP_ADAPTER_ADDRESSES.Description`，未验证，结构偏移有风险）。
+   实现前必须先在这三者里选一个**在本机跑通并打印 ifIndex→描述**的方案，
+   选不出来就不动 `discover_physical_ip`。
+6. 用例：a) 描述含 "Meta Tunnel" 的适配器上的 28.0.0.1 必须落选；
    b) 描述含 "Wireless LAN" 且地址是 28.1.2.3 的候选必须入选（这条正是 E22 那所假想学校）；
    c) 拿不到适配器描述（API 失败）时行为等于现状，绝不因此选中隧道源。
 
