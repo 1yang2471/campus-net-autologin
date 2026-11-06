@@ -12,7 +12,8 @@ import tkinter as tk
 from tkinter import ttk
 from pathlib import Path
 
-from .theme import BG, PANEL, PANEL_EDGE, FG, FG_DIM, DISPLAY, DISPLAY_SMALL, MONO
+from .theme import (BG, PANEL, PANEL_EDGE, FG, FG_DIM, DISPLAY, DISPLAY_SMALL,
+                    MONO, LOG_ERR)
 
 LOG_TAIL_LINES = 400      # 日志窗保留的末尾行数
 LOG_REFRESH_MS = 2000     # 日志自动刷新间隔
@@ -138,10 +139,14 @@ class LogWindow(tk.Toplevel):
         self.unbind("<Map>")
 
     def _style(self) -> None:
-        """行首级别着色：WARNING 黄、ERROR 红（看一眼定位异常）。"""
+        """行首级别着色：WARNING 黄、ERROR 红（看一眼定位异常）。
+
+        正文级字号（11pt Consolas）下红必须 ≥4.5:1——旧值 #d05f52 对面板底实测
+        只有 4.23:1，故换 LOG_ERR（5.17:1）。warn 琥珀本就达标，不动。
+        """
         self._text.tag_configure("warn", foreground="#d1a54a", lmargin1=0,
                                  lmargin2=0)
-        self._text.tag_configure("error", foreground="#d05f52")
+        self._text.tag_configure("error", foreground=LOG_ERR)
 
     def _schedule(self) -> None:
         self._after_id = self.after(LOG_REFRESH_MS, self._tick)

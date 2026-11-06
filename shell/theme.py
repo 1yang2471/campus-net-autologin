@@ -9,7 +9,12 @@ from __future__ import annotations
 
 BG = "#14161a"          # 底色：近黑，带一点冷
 PANEL = "#1d2026"       # 面板
-PANEL_EDGE = "#2a2e36"
+PANEL_EDGE = "#2a2e36"  # 分隔与按下态
+PANEL_HOVER = "#262b33"  # 悬停抬起一层（与按下态必须可分，否则"有反馈"是假的）
+BOUNDARY = "#6a7280"    # 控件边界专用 token：实测 vs BG 3.74:1、vs PANEL 3.37:1
+                        # ——WCAG 非文本对比 ≥3:1 是绝对标准，原先借用的
+                        # PANEL_EDGE 只有 1.33:1，输入框轮廓在石墨底上几乎不存在
+FOCUS = "#7fb3d5"       # 焦点环：刻意用中性蓝，不与状态语义色（绿/琥珀/红）抢含义
 FG = "#e8eaed"          # 主文字
 FG_DIM = "#8b919b"      # 次级文字
 # 语义色（降饱和进石墨世界；与 keeper.TRAY_COLORS 同源，漂移有测试拦截）
@@ -17,6 +22,8 @@ OK_RGB = (79, 157, 99)      # 在线
 WARN_RGB = (209, 145, 63)   # 掉线/受限
 ERR_RGB = (208, 95, 82)     # 被拒
 IDLE_RGB = (139, 145, 155)  # 启动中（= FG_DIM，进灰阶）
+LOG_ERR = "#e0705f"         # 正文级 ERROR 红：vs PANEL 5.17:1
+                            # （旧 #d05f52 是 4.23:1，11pt 正文不达标；大字仍可用）
 MONO = ("Consolas", 11)  # 遥测数字
 DISPLAY = ("Microsoft YaHei UI", 10)
 DISPLAY_BOLD = ("Microsoft YaHei UI", 22, "bold")
@@ -58,12 +65,17 @@ def apply_dark_ttk(root) -> None:
     # lightcolor/darkcolor，回落主题默认亮灰 → 输入框四角白点（用户实测，
     # A/B 像素取证：bw2 角 (142,143,145) vs bw1 边 (41,41,42)≈PANEL_EDGE）
     st.configure("TEntry", fieldbackground=PANEL, foreground=FG,
-                 insertcolor=FG, bordercolor=PANEL_EDGE, lightcolor=PANEL,
-                 darkcolor=PANEL, borderwidth=1)
+                 insertcolor=FG, bordercolor=BOUNDARY, lightcolor=BOUNDARY,
+                 darkcolor=BOUNDARY, borderwidth=1)
     st.configure("TCombobox", fieldbackground=PANEL, background=PANEL,
                  foreground=FG, arrowcolor=FG, selectbackground=PANEL,
-                 selectforeground=FG, bordercolor=PANEL_EDGE,
-                 lightcolor=PANEL, darkcolor=PANEL, borderwidth=1)
+                 selectforeground=FG, bordercolor=BOUNDARY,
+                 lightcolor=BOUNDARY, darkcolor=BOUNDARY, borderwidth=1)
+    # 焦点环：clam 用 border/light/dark 三色画边框，聚焦时整体换成中性蓝即是可见
+    # 焦点指示（绝对标准）。静息态仍是 BOUNDARY，两者不同色由 t43 守住。
+    for _cls in ("TEntry", "TCombobox"):
+        st.map(_cls, bordercolor=[("focus", FOCUS)],
+               lightcolor=[("focus", FOCUS)], darkcolor=[("focus", FOCUS)])
     st.map("TCombobox", fieldbackground=[("readonly", PANEL)],
            foreground=[("readonly", FG)],
            # clam 默认 active/pressed 是亮米色(#eeebe7)，暗色面板上点箭头会闪白

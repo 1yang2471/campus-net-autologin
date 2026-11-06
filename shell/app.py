@@ -17,7 +17,8 @@ from tkinter import messagebox, ttk
 
 from .kernel_api import STATE_COLORS, STATE_LABELS  # noqa: E402
 from .keeper_paths import LOG_FILE, APP_VERSION  # noqa: E402
-from .theme import (BG, PANEL, PANEL_EDGE, FG, FG_DIM, MONO, DISPLAY,  # noqa: E402
+from .theme import (BG, PANEL, PANEL_EDGE, PANEL_HOVER, BOUNDARY, FOCUS,  # noqa: E402
+                    FG, FG_DIM, MONO, DISPLAY,
                     DISPLAY_BOLD, DISPLAY_SMALL, apply_dark_ttk, lamp_photo)
 
 
@@ -85,8 +86,8 @@ class Shell(tk.Tk):
         self._labeled(form, "账号", "e_user", 0)
         self._labeled(form, "密码", "e_pwd", 1, show="•")
         self._labeled(form, "服务器", "e_server", 2)
-        self._button(form, "自动检测", self._auto_detect).grid(
-            row=2, column=2, padx=(0, 12), pady=4)
+        self._btn_detect = self._button(form, "自动检测", self._auto_detect)
+        self._btn_detect.grid(row=2, column=2, padx=(0, 12), pady=4)
         self._detect_hint = tk.Label(form, text="", font=DISPLAY_SMALL, bg=BG,
                                      fg=FG_DIM, anchor="w")
         self._detect_hint.grid(row=3, column=0, columnspan=3, sticky="ew",
@@ -168,6 +169,11 @@ class Shell(tk.Tk):
         self._button(row2, "保存设置", self._on_save_settings).pack(
             side="left", expand=True, fill="x")
         net.columnconfigure(1, weight=1)
+        # 键盘路径：设置区任一输入框回车即保存（原来只能把鼠标移到底部按钮，
+        # 14 个字段全用鼠标逐个点——绝对标准要求主要动作可键盘完成）
+        for _key, _attr, _num in self._SETTING_FIELDS:
+            getattr(self, _attr).bind("<Return>",
+                                      lambda _e: self._on_save_settings())
         self._load_settings()
 
         # 底部：透明度声明行
@@ -182,11 +188,25 @@ class Shell(tk.Tk):
         setattr(self, attr, e)
 
     def _button(self, parent, text, cmd):
+        """统一按钮工厂：四态齐备且键盘可达（绝对标准，t42-t44 守）。
+
+        静息 PANEL / 悬停 PANEL_HOVER / 按下 PANEL_EDGE（activebackground）/
+        聚焦 FOCUS 环（highlightcolor 只在拿到焦点时生效，与静息 BOUNDARY 不同色）。
+        禁用态不改背景——避免与悬停混淆，状态由文字与 takefocus 承担。
+        """
         b = tk.Button(parent, text=text, command=cmd, font=DISPLAY,
                       bg=PANEL, fg=FG, activebackground=PANEL_EDGE,
                       activeforeground=FG, relief="flat", bd=0,
-                      highlightthickness=1, highlightbackground=PANEL_EDGE,
-                      cursor="hand2", pady=4)
+                      highlightthickness=1, highlightbackground=BOUNDARY,
+                      highlightcolor=FOCUS, cursor="hand2", pady=4,
+                      takefocus=1)
+
+        def _hover(on):
+            if str(b["state"]) == "normal":
+                b.configure(bg=PANEL_HOVER if on else PANEL)
+
+        b.bind("<Enter>", lambda _e: _hover(True))
+        b.bind("<Leave>", lambda _e: _hover(False))
         return b
 
     # ---------------- 首配向导（T1 流失点） ----------------
@@ -205,7 +225,14 @@ class Shell(tk.Tk):
         self._auto_detect()              # 少填：门户地址自动探测（未认证劫持页自报）
 
     def _auto_detect(self) -> None:
-        """后台线程探测门户，结果经队列回 Tk 线程（跨线程不碰控件）。"""
+        """后台线程探测门户，结果经队列回 Tk 线程（跨线程不碰控件）。
+
+        在途期间按钮锁定并显示"探测中…"：不锁的话连点会起多个线程，后到的
+        结果覆盖先到的提示，用户看到的就是随机闪烁（t46 守）。
+        """
+        if str(self._btn_detect["state"]) == "disabled":
+            return
+        self._btn_detect.configure(state="disabled", text="探测中…")
         self._detect_hint.config(text="正在自动探测校园门户…", fg=FG_DIM)
 
         def worker():
@@ -217,6 +244,7 @@ class Shell(tk.Tk):
         threading.Thread(target=worker, daemon=True).start()
 
     def _apply_detect(self, got: str) -> None:
+        self._btn_detect.configure(state="normal", text="自动检测")
         if got:
             self.e_server.delete(0, "end")
             self.e_server.insert(0, got)

@@ -3389,6 +3389,217 @@ def t41_no_falsified_v6_claims_shipped():
 
 check("已发布 v6 错误口径已清除", t41_no_falsified_v6_claims_shipped)
 
+print("== 循环42：UI 绝对标准（边界对比/焦点可见/hover/回车/日志红/探测防重入）==")
+
+
+def _contrast(fg: str, bg: str) -> float:
+    """WCAG 2.1 相对亮度对比度——用算术量，不靠眼看。"""
+    def lum(h):
+        h = h.lstrip("#")
+        ch = [int(h[i:i + 2], 16) / 255 for i in (0, 2, 4)]
+        f = lambda c: c / 12.92 if c <= 0.03928 else ((c + 0.055) / 1.055) ** 2.4
+        r, g, b = (f(c) for c in ch)
+        return 0.2126 * r + 0.7152 * g + 0.0722 * b
+    a, b = lum(fg), lum(bg)
+    hi, lo = max(a, b), min(a, b)
+    return (hi + 0.05) / (lo + 0.05)
+
+
+class _UIKernel:
+    needs_setup = False
+
+    def __init__(self):
+        self.saved = []
+        self.detect_calls = 0
+        self.block = None
+
+    def snapshot(self):
+        return {"state": "online", "detail": "", "interval": 3, "reject_remaining": 0}
+
+    def get_settings(self):
+        return {"username": "u", "server": "https://portal.example.edu",
+                "bind_ip": "", "auto_reconnect": "true"}
+
+    def save_settings(self, v):
+        self.saved.append(v)
+
+    def force_reconnect(self): ...
+    def on_change(self, cb): ...
+    def save_credentials(self, *a): ...
+    def test_credentials(self, *a):
+        return True, "ok"
+
+    def detect_portal(self):
+        self.detect_calls += 1
+        if self.block is not None:
+            self.block.wait(5)
+        return "http://10.0.0.1"
+
+    def fetch_flux(self):
+        return {}
+
+
+def _tk_shell(kernel):
+    import tkinter as tk
+    from shell.app import Shell
+    try:
+        return Shell(kernel)
+    except tk.TclError:
+        raise _Skip("无桌面会话，UI 绝对标准用例不适用")
+
+
+def _find_button(win, text):
+    from tkinter import Button
+    hits = []
+
+    def walk(w):
+        for c in w.winfo_children():
+            if isinstance(c, Button) and text in c.cget("text"):
+                hits.append(c)
+            walk(c)
+    walk(win)
+    return hits[0] if hits else None
+
+
+def t42_control_boundary_meets_3to1():
+    """控件边界必须看得见（WCAG 非文本 ≥3:1）。原值 EDGE #2a2e36 对底色
+    实测只有 1.33:1——输入框与按钮轮廓在石墨底上几乎不存在。"""
+    from shell import theme
+    assert hasattr(theme, "BOUNDARY"), "控件边界没有独立 token（现在借用了不可见的 EDGE）"
+    assert _contrast(theme.BOUNDARY, theme.BG) >= 3.0
+    assert _contrast(theme.BOUNDARY, theme.PANEL) >= 3.0
+
+
+def t42_widgets_actually_paint_the_boundary():
+    """token 不能只定义不接线（死开关教训：ssl_verify 曾是这样）：控件必须真用它。"""
+    from shell import theme
+    from tkinter import ttk
+    win = _tk_shell(_UIKernel())
+    try:
+        btn = win._button(win, "边界样本", lambda: None)
+        assert str(btn.cget("highlightbackground")).lower() == theme.BOUNDARY.lower()
+        st = ttk.Style(win)
+        for cls in ("TEntry", "TCombobox"):
+            got = str(st.lookup(cls, "bordercolor")).lower()
+            assert got == theme.BOUNDARY.lower(), f"{cls} 边界仍是 {got}"
+    finally:
+        win.destroy()
+
+
+def t43_focus_ring_visible_and_tab_reachable():
+    """键盘可达 + 焦点可见：takefocus 不得为空/0，聚焦边框色必须区别于静息色。"""
+    win = _tk_shell(_UIKernel())
+    try:
+        btn = win._button(win, "焦点样本", lambda: None)
+        assert str(btn.cget("takefocus")).strip() not in ("", "0"), "按钮不在 Tab 遍历链里"
+        assert str(btn.cget("highlightcolor")).lower() != \
+            str(btn.cget("highlightbackground")).lower(), "聚焦与静息同色＝没有焦点指示"
+    finally:
+        win.destroy()
+
+
+def t44_hover_state_bound_on_buttons():
+    """只有按下态不够：悬停必须有可见反馈（原实现 Enter/Leave 绑定数为 0）。"""
+    win = _tk_shell(_UIKernel())
+    try:
+        btn = win._button(win, "悬停样本", lambda: None)
+        assert btn.bind("<Enter>"), "按钮没有 hover 绑定"
+        assert btn.bind("<Leave>"), "按钮没有 hover 还原绑定"
+    finally:
+        win.destroy()
+
+
+def t45_return_key_saves_settings():
+    """主要动作要能键盘完成：设置区回车＝保存设置（原实现只有鼠标路径）。"""
+    import shell.app as app
+    k = _UIKernel()
+    win = _tk_shell(k)
+    old = (app.messagebox.showinfo, app.messagebox.showerror,
+           app.messagebox.showwarning)
+    app.messagebox.showinfo = app.messagebox.showerror = \
+        app.messagebox.showwarning = lambda *a, **kw: None
+    try:
+        assert win.e_interval.bind("<Return>"), "输入框回车未接保存（只能鼠标点）"
+        win.e_interval.delete(0, "end")
+        win.e_interval.insert(0, "3")
+        # Tk 只在控件**已映射且持有焦点**时派发合成按键（裸控件实测：未映射时
+        # event_generate('<Return>') 触发 0 次，映射+focus_set 后触发 1 次）。
+        # 这是测试环境的装配，不是放宽断言——断言仍是"回车必须真的保存"。
+        win.deiconify()
+        win.update()
+        win.e_interval.focus_set()
+        win.update()
+        win.e_interval.event_generate("<Return>")
+        win.update()
+        assert k.saved, "回车没有触发保存设置"
+    finally:
+        (app.messagebox.showinfo, app.messagebox.showerror,
+         app.messagebox.showwarning) = old
+        win.destroy()
+
+
+def t46_detect_button_locks_while_probing():
+    """探测在途必须防重入：连点会起多个后台线程，后到的提示覆盖先到的。"""
+    import threading
+    import time as _time
+    k = _UIKernel()
+    k.block = threading.Event()          # 门住 detect_portal，模拟"探测在途"
+    win = _tk_shell(k)
+    try:
+        btn = _find_button(win, "自动检测")
+        assert btn is not None, "找不到自动检测按钮"
+        btn.invoke()
+        deadline = _time.time() + 3
+        while _time.time() < deadline and str(btn.cget("state")) == "normal":
+            win.update()
+            _time.sleep(0.02)
+        assert str(btn.cget("state")) == "disabled", "探测在途时按钮仍可点"
+        btn.invoke()
+        btn.invoke()
+        assert k.detect_calls == 1, f"重入没拦住：探测被起了 {k.detect_calls} 次"
+        k.block.set()
+        deadline = _time.time() + 5
+        while _time.time() < deadline and str(btn.cget("state")) != "normal":
+            win.update()
+            _time.sleep(0.02)
+        assert str(btn.cget("state")) == "normal", "探测结束后按钮没还原"
+    finally:
+        k.block.set()
+        win.destroy()
+
+
+def t47_log_error_text_meets_body_contrast():
+    """日志正文级 ERROR 的红必须 ≥4.5:1：原 #d05f52 对面板底实测 4.23:1。"""
+    import tkinter as tk
+    from pathlib import Path
+    from shell import theme
+    from shell.windows import LogWindow
+    tmp = Path(__file__).resolve().parent / "_ui_probe.log"
+    tmp.write_text("2026-11-06 20:00:00 ERROR 探针行\n", encoding="utf-8")
+    root = tk.Tk()
+    root.withdraw()
+    try:
+        w = LogWindow(root, tmp)
+        fg = str(w._text.tag_cget("error", "foreground")).lower()
+        got = _contrast(fg, theme.PANEL)
+        assert got >= 4.5, f"日志红 {fg} 对比只有 {got:.2f}:1（要求 ≥4.5）"
+        w.destroy()
+    except tk.TclError:
+        raise _Skip("无桌面会话，日志窗用例不适用")
+    finally:
+        root.destroy()
+        tmp.unlink(missing_ok=True)
+
+
+for _n, _f in (("控件边界对比≥3:1", t42_control_boundary_meets_3to1),
+               ("控件真的接上边界 token", t42_widgets_actually_paint_the_boundary),
+               ("焦点环可见且 Tab 可达", t43_focus_ring_visible_and_tab_reachable),
+               ("按钮有 hover 态", t44_hover_state_bound_on_buttons),
+               ("回车可保存设置", t45_return_key_saves_settings),
+               ("探测在途按钮锁定防重入", t46_detect_button_locks_while_probing),
+               ("日志 ERROR 正文红≥4.5:1", t47_log_error_text_meets_body_contrast)):
+    check(_n, _f)
+
 print(f"\n结果: PASS={len(PASS)} FAIL={len(FAIL)} SKIP={len(SKIP)}"
       + ("（真实门户项未启用）" if not LIVE and SKIP else ""))
 sys.exit(1 if FAIL else 0)
