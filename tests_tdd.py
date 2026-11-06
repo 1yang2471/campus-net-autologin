@@ -3292,17 +3292,71 @@ def t39_ipv6_observation_never_affects_offline():
 
 
 def t39_login_cap_is_15_minutes():
-    """熔断停时校准（2026-11-06 下午 37 次重登零冻结 vs 5 次 1 小时停摆）：
-    停 15 分钟——降速而非停摆，防冻结主防线仍是 30s 节流+退避。"""
+    """熔断停时与计数窗口必须是两个常量（2026-11-06 下午校准停时 15 分钟；
+    晚上 t40 抓到 v1.0.10 让两者共用一个常量，把速率上限抬到 32 次/小时）。
+    行为由 t40 守，这里只守"两者不再耦合"这一条常量契约。"""
     import keeper as _k
     k = _k.Keeper(_cfg())
-    assert k.LOGIN_CAP_S == 900.0, k.LOGIN_CAP_S
+    assert k.LOGIN_PAUSE_S == 900.0, k.LOGIN_PAUSE_S
+    assert k.LOGIN_COUNT_S == 3600.0, k.LOGIN_COUNT_S
+    assert k.LOGIN_COUNT_S > k.LOGIN_PAUSE_S, "计数窗口不得等于停时（否则速率失控）"
 
 
 check("probe_ipv6 三态不误报", t39_ipv6_probe_three_states)
 check("v6 观察不参与掉线+联合提示", t39_ipv6_observation_never_affects_offline)
 check("熔断停时=15分钟", t39_login_cap_is_15_minutes)
 check("自动重登频率熔断（手动不受限）", t38_login_rate_guard_caps_relogin_storm)
+
+print("== 循环40：滚动一小时自动重登速率上限 ==")
+
+
+def t40_login_rate_ceiling_per_rolling_hour():
+    """门户反暴力冻结线实测 12 次/小时：任何滚动 1 小时窗口内，自动重登
+    成功次数必须 ≤ LOGIN_OK_CAP。计数窗口与停时是两个概念——v1.0.10 把停时
+    1h→15min 时共用了同一个常量，上限被带到 8次/15min ≈ 32次/小时，恰好
+    越过冻结线（规格 E14/§3.1 第 1 项）。"""
+    import keeper as _k
+    import time as _t
+    clock = {"t": 1000.0}
+    k = _k.Keeper(_cfg())
+    k.probe_online = lambda: True
+    k.probe_l2_restricted = lambda: False
+    k.portal_alive = lambda: True
+    k.clash_recover = lambda: None
+    k.probe_ipv6 = lambda: True
+    stamps = []
+    box = {"alive_once": False}
+
+    def flux():
+        # 复刻"反复被踢"：重登成功后会话只活一拍，随后又空
+        if box["alive_once"]:
+            box["alive_once"] = False
+            return {"用户名称": "u"}
+        return {}
+
+    def login():
+        stamps.append(clock["t"])
+        box["alive_once"] = True
+        return True, "登录成功"
+
+    k.fetch_flux = flux
+    k.do_login = login
+    real = _t.monotonic
+    _t.monotonic = lambda: clock["t"]   # 假时钟：t38 把 8 次登录全挤在同一瞬间，
+    try:                                # 窗口长度从不参与断言，故测不出这条回归
+        for _ in range(120):            # 120 拍 × 60 秒 = 两小时持续被踢
+            clock["t"] += 60.0
+            k.tick()
+    finally:
+        _t.monotonic = real
+    worst = max((sum(1 for s in stamps if t0 <= s < t0 + 3600.0) for t0 in stamps),
+                default=0)
+    assert worst <= k.LOGIN_OK_CAP, (
+        f"滚动一小时内自动重登 {worst} 次，上限应为 {k.LOGIN_OK_CAP} 次"
+        f"（实测冻结线 12 次/小时）——计数窗口被停时常量带窄了")
+
+
+check("滚动一小时登录次数≤上限", t40_login_rate_ceiling_per_rolling_hour)
 
 print(f"\n结果: PASS={len(PASS)} FAIL={len(FAIL)} SKIP={len(SKIP)}"
       + ("（真实门户项未启用）" if not LIVE and SKIP else ""))

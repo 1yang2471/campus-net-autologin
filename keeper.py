@@ -705,11 +705,16 @@ class Keeper:
     LOGIN_MIN_INTERVAL = 30.0
     # 自动重登频率熔断（2026-11-05 夜实测：1 小时 25+ 次登录触发门户反暴力
     # 冻结）。手动重连不受限。
-    LOGIN_OK_CAP = 8            # 1 小时内自动重登成功次数上限
+    LOGIN_OK_CAP = 8            # 计数窗口内自动重登成功次数上限
+    # 计数窗口与暂停时长是两件事，必须分开（2026-11-06 晚 t40 实测：v1.0.10
+    # 把停时 1h→15min 时两者共用 LOGIN_CAP_S，速率上限被抬到 8次/15min
+    # ≈32次/小时，越过硬实测的冻结线 12 次/小时——熔断本该防冻结，反而成了
+    # 制造冻结的那只手）。拆分后上限恒为「滚动 1 小时 8 次」。
+    LOGIN_COUNT_S = 3600.0
     # 暂停时长 15 分钟（2026-11-06 下午实测校准：6 次/小时重登连续 6 小时
     # 零冻结，熔断触发 5 次×原 1 小时停机反而造成"长时间无人值班"——熔断
     # 的职责是降速不是停摆；30s 节流+600s 退避仍是防冻结主防线）
-    LOGIN_CAP_S = 900.0
+    LOGIN_PAUSE_S = 900.0
 
     def __init__(self, cfg: dict) -> None:
         self.cfg = cfg
@@ -1279,6 +1284,29 @@ class Keeper:
                 return True
         return False
 
+    def _rate_capped(self, now: float) -> bool:
+        """本轮是否禁止自动登录：仍在熔断停时内，或滚动计数窗口已达上限。
+
+        达上限时顺手续停时并留一条告警（只在进入停时的瞬间告警，不每拍刷）。
+        判断必须在登录**前**走一遍：只在登录后记账的话，每个停时周期都会多
+        放行一次——t40 用假时钟实测出 10 次/小时 > 上限 8 次。计数窗口与停时
+        分离的理由见类常量注释。
+        """
+        if now < self._login_cap_until:
+            return True
+        self._login_ok_times = [t for t in self._login_ok_times
+                                if now - t < self.LOGIN_COUNT_S]
+        if len(self._login_ok_times) < self.LOGIN_OK_CAP:
+            return False
+        minutes = int(self.LOGIN_PAUSE_S / 60)
+        self._cap_detail = (f"门户在反复踢线，自动重登暂停 {minutes} 分钟"
+                            f"（可手动重连）")
+        self._login_cap_until = now + self.LOGIN_PAUSE_S
+        self.log.warning("滚动 %d 小时内自动重登已达 %s 次上限——继续重登只会撞门户"
+                         "反暴力冻结（实测 12 次/小时即触发），自动重登降速 %d 分钟",
+                         int(self.LOGIN_COUNT_S / 3600), self.LOGIN_OK_CAP, minutes)
+        return True
+
     def tick(self, manual: bool = False) -> None:
         """一次探测周期：三层判定 + L2 策略层观察 + L3 会话真值 + 按需登录
         + 登录风暴熔断。
@@ -1361,7 +1389,7 @@ class Keeper:
             return
         # 自动重登频率熔断（2026-11-05 夜实测：门户反复踢线 + 守护每次都
         # 重登成功 → 1 小时 25+ 次登录触发门户反暴力冻结）。手动重连不受限。
-        if not manual and time.monotonic() < self._login_cap_until:
+        if not manual and self._rate_capped(time.monotonic()):
             self.set_state("offline", self._cap_detail)
             return
         # 免认证时段第二课（2026-11-06 00:0x 实测）：窗口内 AC ACL 变化使
@@ -1383,24 +1411,12 @@ class Keeper:
         was_dead = self._session_dead      # 本次登录是否由会话探针判死触发
         ok, msg = self.do_login()
         if ok:
-            # 自动重登频率熔断：1 小时内成功重登达上限 = 门户在反复踢线
-            # （加速器行为管理/flux 劣化），继续登只会撞反暴力冻结——暂停
-            # 一小时并如实显示，手动「立即检测重连」随时可越（用户显式意图）。
+            # 自动重登频率熔断：滚动 1 小时内成功重登达上限 = 门户在反复踢线
+            # （加速器行为管理/flux 劣化），继续登只会撞反暴力冻结——先降速
+            # 15 分钟并如实显示，手动「立即检测重连」随时可越（用户显式意图）。
             if not manual:
-                now = time.monotonic()
-                self._login_ok_times.append(now)
-                self._login_ok_times = [t for t in self._login_ok_times
-                                        if now - t < self.LOGIN_CAP_S]
-                if len(self._login_ok_times) >= self.LOGIN_OK_CAP:
-                    lt = time.localtime(time.time() + self.LOGIN_CAP_S)
-                    self._cap_detail = (f"门户在反复踢线，自动重登暂停至 "
-                                        f"{lt.tm_hour:02d}:{lt.tm_min:02d}（可手动重连）")
-                    self._login_cap_until = now + self.LOGIN_CAP_S
-                    self._login_ok_times = []
-                    self.log.warning("1 小时内自动重登成功 %s 次——门户可能在反复踢线"
-                                     "（如加速器被行为管理识别）或 flux 端点劣化，"
-                                     "自动重登暂停 %d 分钟", self.LOGIN_OK_CAP,
-                                     int(self.LOGIN_CAP_S / 60))
+                self._login_ok_times.append(time.monotonic())
+                if self._rate_capped(time.monotonic()):
                     self.set_state("offline", self._cap_detail)
                     return
             # 重连成功即解除 flux 判死；门户答「您已在线」而我等探针刚判死
