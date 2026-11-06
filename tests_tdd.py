@@ -3690,9 +3690,17 @@ def t43_no_bare_dont_relogin_phrase():
     那才真延长风控。要说就得说清"勿手动注销/重登"。"""
     root = Path(__file__).resolve().parent
     banned = ("认证正常，勿重登", "打不开勿重登")
-    hits = [(n, b) for n in ("keeper.py", "README.md")
-            for b in banned
-            if b in (root / n).read_text(encoding="utf-8")]
+    scanned = []
+    for name in ("keeper.py", "README.md"):
+        p = root / name
+        text = p.read_text(encoding="utf-8")
+        # 只查"成品句子"，先剥掉本文件那两条纪律注释——否则守卫会被
+        # 自己的"禁止引用"触发，那种假红只会教人把守卫删掉。
+        if name == "keeper.py":
+            text = "\n".join(ln for ln in text.splitlines()
+                             if "措辞纪律" not in ln)
+        scanned.append((name, text))
+    hits = [(n, b) for n, text in scanned for b in banned if b in text]
     assert not hits, f"存在与自动补绑自相矛盾的裸文案: {hits}"
 
 
