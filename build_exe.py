@@ -26,6 +26,9 @@ def build_command() -> list[str]:
         "--noconfirm", "--clean",
         "--onedir", "--noconsole",
         "--name", APP_NAME,
+        # 应用图标：开始菜单/任务栏/设置-apps 页同款绿灯（缺失则重出包后
+        # 快捷方式图标断链，2026-11-06 装机化改造时踩过）
+        "--icon", str(ROOT / "app.ico"),
         # 源码零引用但 Pillow 的可选依赖被采集（实测 dist 里躺着 27MB
         # numpy）——排除出去，包体积近乎减半
         "--exclude-module", "numpy",
