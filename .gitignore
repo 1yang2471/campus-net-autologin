@@ -26,3 +26,4 @@ shot_*.png
 # 构建产物日志
 build_exe.log
 /dist-1.0.12/
+/dist-1.0.13/
