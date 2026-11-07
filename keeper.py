@@ -155,6 +155,8 @@ def _parse_portal_dict(s: str) -> dict:
 # 措辞纪律：不许出现裸的"勿重登"——补绑/手动重连都是"重登"，同屏一边说勿重登
 # 一边自动发登录，用户会去门户手动注销，那才真延长风控。
 FREE_WINDOW_DETAIL = "免认证时段（无需登录）"
+FREE_DETECT_STREAK = 2   # 连续 N 次"锚点绿+登录不受理"即判定免会话态（第一性原理：可直接观测）
+FREE_DETECT_DETAIL = "免认证时段（自动检测）：公网可用、门户不受理登录"
 DPI_WINDOW_DETAIL = "DPI 风控窗口（认证正常，勿手动注销/重登，会自动放行）"
 
 
@@ -877,6 +879,11 @@ class Keeper:
                                  "已跳过", seg)
                 continue
             self.free_windows.append((start, end))
+        # 免会话态自动检测（2026-11-07 第一性原理重构）：免认证时段=公网可达+
+        # 门户不维护会话+登录不被受理的稳定组合，三者运行时可测——配置的
+        # free_windows 降级为可选优化（免试错直接静默），不再必需。
+        self._free_streak = 0        # 连续"锚点绿但登录不受理"计数
+        self._sess_free_mode = False  # 自动检测的免会话态
 
     def apply_config(self, cfg: dict) -> None:
         """设置页热重载（保存即生效）：重新推导运行时参数、失效门户 DNS
@@ -1468,7 +1475,8 @@ class Keeper:
         manual=True（用户点「立即检测重连」）放行登录；周期 tick 受
         auto_reconnect 开关约束。
         """
-        if self.probe_online():
+        l1 = self.probe_online()
+        if l1:
             # L2 节流（trouble-maker P1-5）：每 tick 都 TLS 握手 baidu 既刷爆
             # 轮转日志，又高频撞 DPI 黑名单——在线期 60 秒一探足够。
             # 观察结果记入 _l2_window_until：受限窗口要上浮到面板/托盘，
@@ -1501,7 +1509,8 @@ class Keeper:
                 # 会在门户反暴力冻结期内撞墙（2026-11-06 00:0x 实测）。
                 self._probe_online_streak += 1
                 if (self._frozen_until and self._probe_online_streak >= 3
-                        and not self._in_free_window()):
+                        and not self._in_free_window()
+                        and not self._sess_free_mode):
                     self._frozen_until = 0.0
                     self.log.info("探测连续 3 次在线，冻结闸门解除")
                 self.reject_until = 0.0
@@ -1558,7 +1567,8 @@ class Keeper:
         # 任务无人接手）并招致反暴力冻结。窗口内一切自动登录禁止。
         # 用户面（2026-11-07 报告）：探测失败不再复用"离线"态——琥珀"离线"
         # 被读成断网；显示中性 free_window 态，白天的真掉线语义不受影响。
-        if not manual and self._in_free_window():
+        if not manual and (self._in_free_window()
+                           or (self._sess_free_mode and l1)):
             self.set_state("free_window",
                            "免认证时段：不自动登录（锚点间歇失败属夜间常态，网络通常可用）")
             return
@@ -1587,6 +1597,10 @@ class Keeper:
             # =矛盾实锤（cookie 认会话型部署，flux 恒空但会话真好），计入
             # 自停额度——通用判据，不针对任何单一学校。
             self._session_dead = False
+            if self._sess_free_mode or self._free_streak:
+                self.log.info("登录恢复会话受理——退出免会话态（自动检测）")
+            self._sess_free_mode = False
+            self._free_streak = 0
             if was_dead and _already_online(msg):
                 self._sess_false += 1
                 if self._sess_false >= SESSION_FALSE_LIMIT:
@@ -1611,6 +1625,16 @@ class Keeper:
             self.transient_streak = 0
             self.clash_recover()
         else:
+            if not manual and l1:
+                # 锚点绿 + 登录不受理：免会话态的直接观测证据（公网可达而
+                # 门户不维护会话），连续 2 次即判定——零配置、自适应窗口边缘
+                self._free_streak += 1
+                if self._free_streak >= FREE_DETECT_STREAK:
+                    self._sess_free_mode = True
+                    self.log.info("连续 %d 次锚点绿但登录不受理——进入免会话态"
+                                  "（自动检测，无需 free_windows 配置）", self._free_streak)
+                    self.set_state("free_window", FREE_DETECT_DETAIL)
+                    return
             self.handle_rejection(msg)
 
     @staticmethod

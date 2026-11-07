@@ -3365,6 +3365,138 @@ def t45_dualstack_off_makes_zero_handshake():
 
 check("默认关零握手零字段", t45_dualstack_off_makes_zero_handshake)
 
+
+print("== 循环46：免会话态自动检测（第一性原理：免认证时段可直接观测，不依赖时钟配置）==")
+
+
+def _no_free_cfg():
+    """未配置 free_windows 的守护（自动检测必须零配置可用）。"""
+    return _cfg()
+
+
+def t46_learned_free_mode_after_two_unserviced_logins():
+    """零配置自动检测：锚点绿 + 会话死 + 连续 2 次登录不被受理（L1 绿下的
+    登录失败=门户不维护会话的直接证据）→ 进入免会话态：停自动登录、
+    显示中性 free_window 态。不再依赖 free_windows 时钟配置。"""
+    import keeper as _k
+    k = _k.Keeper(_no_free_cfg())
+    logins = []
+    k.probe_online = lambda: True          # L1 绿：公网可用
+    k.probe_l2_restricted = lambda: False
+    k.fetch_flux = lambda: {}              # 会话不存在
+    k.portal_alive = lambda: True          # 门户活着但不受理登录
+    k.clash_recover = lambda: None
+
+    def _login():
+        logins.append(1)
+        return False, "Task 'NOAUTH:*' not taken"   # 2026-11-06 夜间实测形态
+
+    k.do_login = _login
+    k.LOGIN_MIN_INTERVAL = 0.0
+    for _ in range(3):
+        k._last_login_at = 0.0
+        k.reject_until = 0.0               # 测试自控节流，聚焦检测逻辑
+        k._l2_at = 0.0
+        k._sess_at = 0.0
+        k.tick()
+    # 拍1：flux 空表×1（防抖不判死）；拍2：判死→登录#1 失败；拍3：登录#2 失败→入态
+    assert logins == [1, 1], f"应恰好试了 2 次登录，实际 {logins}"
+    assert k._sess_free_mode is True, "连续 2 次不受理应进入免会话态"
+    assert k.state == "free_window", \
+        f"应显示中性免认证态，实际 {k.state!r}/{k.state_detail!r}"
+    for _ in range(5):
+        k._last_login_at = 0.0
+        k.reject_until = 0.0
+        k._l2_at = 0.0
+        k._sess_at = 0.0
+        k.tick()
+    assert logins == [1, 1], "免会话态内不得再自动登录（比 8/h 熔断更早刹车）"
+
+
+check("自动检测：两次不受理登录→免会话态", t46_learned_free_mode_after_two_unserviced_logins)
+
+
+def t46_free_mode_exits_when_l1_red_and_login_revives():
+    """窗口结束无需时钟：免会话态下 L1 变红=网络开始需要认证 → 允许重连；
+    门户恢复受理（登录成功）→ 退出免会话态回在线。失败则留在检测态靠
+    既有退避节奏，绝不风暴。"""
+    import keeper as _k
+    k = _k.Keeper(_no_free_cfg())
+    logins = []
+    k.probe_l2_restricted = lambda: False
+    k.fetch_flux = lambda: {"用户名称": "u"}
+    k.portal_alive = lambda: True
+    k.clash_recover = lambda: None
+    k._sess_free_mode = True                # 已在免会话态
+    k._free_streak = 2
+
+    def _login():
+        logins.append(1)
+        return True, "logon success"
+
+    k.do_login = _login
+    k.LOGIN_MIN_INTERVAL = 0.0
+
+    # 阶段1：L1 仍绿 → 检测态不放行登录（省预算）
+    k.probe_online = lambda: True
+    k._last_login_at = 0.0
+    k._l2_at = 0.0
+    k._sess_at = 0.0
+    k.tick()
+    assert logins == [], "免会话态 + L1 绿：不得登录"
+
+    # 阶段2：L1 变红（免认证结束）→ 重连放行，成功即退出检测态
+    k.probe_online = lambda: False
+    k._last_login_at = 0.0
+    k._l2_at = 0.0
+    k._sess_at = 0.0
+    k.tick()
+    assert logins == [1], "L1 变红应放行重连尝试"
+    assert k._sess_free_mode is False, "登录恢复受理应退出免会话态"
+    assert k._free_streak == 0, "复活成功必须清零不受理计数"
+    assert k.state == "online", f"应回在线，实际 {k.state!r}"
+
+
+check("自动检测：L1 变红放行重连，复活即退出", t46_free_mode_exits_when_l1_red_and_login_revives)
+
+
+def t46_revival_resets_streak_before_mode_entry():
+    """正常踢线（登录复活 flux）永不误入免会话态：1 次失败后 1 次复活
+    → 计数清零、模式保持关——t37 场景的检测器侧回归守卫。"""
+    import keeper as _k
+    k = _k.Keeper(_no_free_cfg())
+    logins = []
+    k.probe_online = lambda: True
+    k.probe_l2_restricted = lambda: False
+    k.portal_alive = lambda: True
+    k.clash_recover = lambda: None
+    box = {"alive": False}
+    k.fetch_flux = lambda: ({"用户名称": "u"} if box["alive"] else {})
+    k.LOGIN_MIN_INTERVAL = 0.0
+
+    def _login():
+        logins.append(1)
+        box["alive"] = True                 # 踢线→登录→flux 复活
+        return True, "logon success"
+
+    k.do_login = _login
+    k._last_login_at = 0.0
+    k._l2_at = 0.0
+    k._sess_at = 0.0
+    k.tick()                                # 初始 flux 死：判死不翻转（防抖）
+    box["alive"] = False                    # 被踢
+    k._sess_at = 0.0
+    k.tick()                                # 空表×1 防抖
+    k._sess_at = 0.0
+    k._last_login_at = 0.0
+    k.tick()                                # 空表×2 判死→重登→复活
+    assert box["alive"] and k.state == "online"
+    assert k._free_streak == 0 and k._sess_free_mode is False, \
+        "正常踢线复活不得累积不受理计数"
+
+
+check("自动检测：正常踢线复活不误判", t46_revival_resets_streak_before_mode_entry)
+
 print("== 循环39：IPv6 出口观察 + 熔断停时校准 ==")
 
 
