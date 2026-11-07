@@ -102,6 +102,10 @@ username = 你的账号                   # 首次运行引导填入；密码存
 password = <keyring>                 # 占位——真实密码在 Windows 凭据管理器
 probe_ips = 223.5.5.5,119.29.29.29   # L1 公网探测锚点（IP 直连，绕 DNS）
 campus_dns =                         # 校园网 DNS（留空走系统 DNS；填对则物理栈解析更快更准）
+dual_stack = false                   # true = 登录自动握手对端并携带 ipv4or6（E4 一次认证绑两栈；v6 掉线自动回真）
+v6_peer =                            # 对端栈入口裸 v6 字面量（如 1::2）；空 = 双栈关闭
+peer_opr =                           # 对端握手操作名（校事实词表，异校必配；汕大实测 ipv4or6online）
+peer_path = /ac_portal/login.php     # 对端端点路径（校事实，来自门户 JS 字面量）
 probe_timeout = 3                    # 探测超时秒数（1~15）
 login_timeout = 0                    # 登录超时秒数；0=自适应 max(6, 2×probe_timeout)，慢门户可调大
 interval = 3                         # 探测周期秒数（钳制 1~300）

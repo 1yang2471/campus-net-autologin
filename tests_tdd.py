@@ -3273,6 +3273,98 @@ def t44_free_window_portal_down_shows_calm_state():
 
 check("免认证时段门户不可达显示中性态", t44_free_window_portal_down_shows_calm_state)
 
+
+print("== 循环45：守护自动双栈补绑（E4 自动化接入登录链）==")
+
+
+def t45_login_carries_ipv4or6_when_dualstack_green():
+    """守护自动补绑（2026-11-07 用户拍板）：dual_stack 开且对端握手成功时，
+    登录表单必须携带 ipv4or6=<对端现场 ip>（E4：一次认证绑两栈）。
+    网络缝（v6 源、握手）用替身，解析走真实代码路径。"""
+    import keeper as _k
+
+    k = _k.Keeper(_cfg(dual_stack="true", v6_peer="1::2", peer_opr="ipv4or6online"))
+    sent = {}
+
+    def fake_ph(host, ip, path, method="GET", body="", **kw):
+        sent["body"] = body or ""
+        return 200, "{'success':true,'msg':'logon success'}"
+
+    old_ph = _k.physical_http
+    try:
+        _k.physical_http = fake_ph
+        k._portal_target = lambda: ("h", "192.0.2.7")
+        k._v6_source = lambda: "2001:db8::9"       # 网络缝替身：有全局 v6 源
+        k._peer_handshake = lambda peer, path, opr, src, timeout: \
+            "{'success':true, 'ip':'2001:db8:1::19', 'isOnline':false}"
+        ok, msg = k.do_login()
+    finally:
+        _k.physical_http = old_ph
+    assert ok, f"登录应成功: {msg}"
+    assert "ipv4or6=2001%3Adb8%3A1%3A%3A19" in sent["body"], \
+        f"登录体应带现场取的对端 ip: {sent['body']}"
+
+
+check("双栈开+握手绿→登录携带 ipv4or6", t45_login_carries_ipv4or6_when_dualstack_green)
+
+
+def t45_handshake_fail_degrades_to_pure_v4():
+    """握手失败/应答不可解析（夜间 404 实测形态）→ 登录退回纯 v4 照常发
+    （absent ≠ fail，绝不挡 v4 主线）。回归守卫：降级语义被改坏时，
+    v6 抖动会连 v4 登录一起挡死。"""
+    import keeper as _k
+
+    k = _k.Keeper(_cfg(dual_stack="true", v6_peer="1::2", peer_opr="ipv4or6online"))
+    sent = {}
+
+    def fake_ph(host, ip, path, method="GET", body="", **kw):
+        sent["body"] = body or ""
+        return 200, "{'success':true,'msg':'logon success'}"
+
+    old_ph = _k.physical_http
+    try:
+        _k.physical_http = fake_ph
+        k._portal_target = lambda: ("h", "192.0.2.7")
+        k._v6_source = lambda: "2001:db8::9"
+        k._peer_handshake = lambda *a, **kw: "<h1>Not Found</h1>"   # 夜间实测形态
+        ok, msg = k.do_login()
+    finally:
+        _k.physical_http = old_ph
+    assert ok, f"纯 v4 登录应照常成功: {msg}"
+    assert "ipv4or6" not in sent["body"], f"握手失败不得携带字段: {sent['body']}"
+
+
+check("握手失败降级纯 v4", t45_handshake_fail_degrades_to_pure_v4)
+
+
+def t45_dualstack_off_makes_zero_handshake():
+    """默认关（异校零影响）：dual_stack 缺省时零握手调用、登录体无字段——
+    对不配双栈的学校，守护行为与旧版逐字节等价。"""
+    import keeper as _k
+
+    k = _k.Keeper(_cfg())
+    calls = []
+    sent = {}
+    k._peer_handshake = lambda *a, **kw: calls.append(1) or ""
+    k._v6_source = lambda: "2001:db8::9"     # 即使有源也不许握手
+
+    def fake_ph(host, ip, path, method="GET", body="", **kw):
+        sent["body"] = body or ""
+        return 200, "{'success':true,'msg':'ok'}"
+
+    old_ph = _k.physical_http
+    try:
+        _k.physical_http = fake_ph
+        k._portal_target = lambda: ("h", "192.0.2.7")
+        k.do_login()
+    finally:
+        _k.physical_http = old_ph
+    assert calls == [], "默认关必须零握手调用"
+    assert "ipv4or6" not in sent["body"], "默认关登录体不得含字段"
+
+
+check("默认关零握手零字段", t45_dualstack_off_makes_zero_handshake)
+
 print("== 循环39：IPv6 出口观察 + 熔断停时校准 ==")
 
 

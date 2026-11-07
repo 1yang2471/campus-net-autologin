@@ -86,11 +86,69 @@ DEFAULTS = {
     "probe_host": "connect.rom.miui.com",
     "campus_dns": "",
     "probe_ips": "223.5.5.5,119.29.29.29",
+    "dual_stack": "false",   # true = 登录自动握手对端并携带 ipv4or6（E4 一次认证绑两栈）
+    "v6_peer": "",           # 对端栈入口裸 v6 字面量（如 1::2）；空 = 双栈关闭
+    "peer_opr": "",          # 对端握手操作名（词表/校事实；汕大实测 ipv4or6online）
+    "peer_path": "/ac_portal/login.php",  # 对端端点路径
     "user_agent": ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
                    "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"),
 }
 
 FORM_BASE = {"opr": "pwdLogin", "rememberPwd": "1"}
+
+
+def _parse_portal_dict(s: str) -> dict:
+    """门户伪 JSON 方言（规格 §4：判定结构固定，异校只换词表）：
+    单/双引号键值、冒号后可带空格、引号内逗号不切分、数值留字符串。
+    与 go-cnal dialect.Parse / scenario_runner.parse_portal 同语义但**故意
+    不共享代码**——场景裁判必须独立于被裁实现，同病相怜会假绿。"""
+    out: dict = {}
+    body = (s or "").strip()
+    if body.startswith("{"):
+        body = body[1:]
+    if body.endswith("}"):
+        body = body[:-1]
+    if not body.strip():
+        return out
+    parts: list[str] = []
+    buf = ""
+    q = ""
+    for ch in body:
+        if q:
+            buf += ch
+            if ch == q:
+                q = ""
+        elif ch in "'\"":
+            q = ch
+            buf += ch
+        elif ch == ",":
+            parts.append(buf)
+            buf = ""
+        else:
+            buf += ch
+    if buf.strip():
+        parts.append(buf)
+    for kv in parts:
+        if ":" not in kv:
+            continue
+        k, v = kv.split(":", 1)
+        k = k.strip()
+        if len(k) >= 2 and k[0] in "'\"" and k[-1] == k[0]:
+            k = k[1:-1]
+        v = v.strip()
+        if v == "true":
+            val = True
+        elif v == "false":
+            val = False
+        elif v in ("null", ""):
+            val = None
+        elif len(v) >= 2 and v[0] in "'\"" and v[-1] == v[0]:
+            val = v[1:-1]
+        else:
+            val = v
+        if k:
+            out[k] = val
+    return out
 
 # 状态细节文案的唯一来源：tick 写进 state_detail、托盘/面板各自渲染时都引用
 # 这里，不再各造一句（历史上托盘与面板两套字导致熔断指引在托盘整个看不见）。
@@ -1043,13 +1101,86 @@ class Keeper:
                                   port=self._portal_port)
         return 0 < status < 500
 
+    def _v6_source(self) -> str:
+        """本机到对端路由的 v6 源地址（UDP 对端选路读源，不发包）。
+        E7 教训：TUN 会接管默认路由——非 2000::/3 全局段（fdfe:/fc00 等
+        隧道源）一律放弃返回空串，宁可不带字段也不用假源。"""
+        try:
+            u = socket.socket(socket.AF_INET6, socket.SOCK_DGRAM)
+            try:
+                u.connect((self.cfg["v6_peer"].strip("[]"), 53))
+                src = u.getsockname()[0]
+            finally:
+                u.close()
+        except OSError:
+            return ""
+        if not src or src.startswith(("fe80", "fc", "fd", "::")):
+            return ""
+        try:
+            first = int(src.split(":")[0], 16)
+        except ValueError:
+            return ""
+        return src if 0x2000 <= first <= 0x3FFF else ""
+
+    def _peer_handshake(self, peer: str, path: str, opr: str, src: str,
+                        timeout: float) -> str:
+        """绑源 v6 握手（无凭据）：POST {opr: …} 到对端端点，返回原始响应体。
+        http.client + source_address 绑定物理 v6 源（E7 纪律）；表单构造上
+        只有操作名，凭据进不来（与 go-cnal HandshakeForm 同构）。"""
+        import http.client
+        import urllib.parse
+        body = urllib.parse.urlencode({"opr": opr})
+        conn = http.client.HTTPConnection(
+            "[" + peer.strip("[]") + "]", 80,
+            source_address=(src, 0), timeout=timeout)
+        try:
+            conn.request("POST", path, body=body,
+                         headers={"Content-Type":
+                                  "application/x-www-form-urlencoded"})
+            r = conn.getresponse()
+            return r.read(2048).decode("utf-8", "replace")
+        except OSError:
+            return ""
+        finally:
+            conn.close()
+
+    def _dualstack_field(self) -> str:
+        """双栈字段现场取值（规格 §5.3）：dual_stack 开且对端握手成功时返回
+        对端 ip；握手失败/应答不可解析/源不可信 → 返回空串——登录退回纯 v4
+        （absent ≠ fail，绝不挡 v4 主线）。凭据永不进这个函数。"""
+        if str(self.cfg.get("dual_stack", "false")).lower() != "true":
+            return ""
+        peer = str(self.cfg.get("v6_peer", "")).strip()
+        opr = str(self.cfg.get("peer_opr", "")).strip()
+        if not peer or not opr:
+            return ""
+        src = self._v6_source()
+        if not src:
+            self.log.info("双栈字段：无可信 v6 源（TUN？），本次登录不带 ipv4or6")
+            return ""
+        timeout = max(float(self.cfg.get("probe_timeout", "3") or 3), 5.0)
+        resp = self._peer_handshake(peer, str(self.cfg.get("peer_path", "/ac_portal/login.php")),
+                                    opr, src, timeout)
+        m = _parse_portal_dict(resp)
+        ip = m.get("ip")
+        if m.get("success") is True and isinstance(ip, str) and ip:
+            self.log.info("双栈握手：对端 %s 应答 ip=%s（isOnline=%s）→ 登录携带 ipv4or6",
+                          peer, ip, m.get("isOnline"))
+            return ip
+        self.log.info("双栈握手：对端不可观测（%r），本次登录不带字段", (resp or "")[:80])
+        return ""
+
     def do_login(self) -> tuple[bool, str]:
         """第三层：POST 登录并校验响应（物理栈钉 IP），返回 (成功, 失败原因)。"""
         host, ip = self._portal_target()
         if not ip:
             return False, "门户解析失败（疑似不在校园网），已跳过以防凭据外泄"
         import urllib.parse
-        form = urllib.parse.urlencode({k: v for k, v in self.form.items()})
+        form_fields = dict(self.form)
+        field = self._dualstack_field()   # 现场取值；空 = 纯 v4 提交（降级语义）
+        if field:
+            form_fields["ipv4or6"] = field
+        form = urllib.parse.urlencode(form_fields)
         status, text = physical_http(
             host, ip, self.cfg["login_path"], method="POST",
             body=form,
