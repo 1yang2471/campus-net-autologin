@@ -1385,6 +1385,13 @@ class Keeper:
                 return
         self._probe_online_streak = 0
         if not self.portal_alive():
+            if self._in_free_window():
+                # 免认证时段门户不可达是常态（认证服务夜间不受理认证），
+                # 不是"网络异常"——显示中性态即可；自动登录本就被禁止，
+                # 物理源重发现也留到窗口外再跑（窗口内无登录无过期源问题）。
+                self.set_state("free_window", FREE_WINDOW_DETAIL)
+                self.extra_wait = self.portal_down_wait
+                return
             self.set_state("portal_down")
             self.extra_wait = self.portal_down_wait
             # 网络切换（休眠唤醒/WiFi↔有线/VPN 连断）后旧自动发现的源 IP
@@ -1418,8 +1425,11 @@ class Keeper:
         # 免认证时段第二课（2026-11-06 00:0x 实测）：窗口内 AC ACL 变化使
         # 锚点探测间歇失败——这不是真掉线，登录必被门户回 NOAUTH（登录
         # 任务无人接手）并招致反暴力冻结。窗口内一切自动登录禁止。
+        # 用户面（2026-11-07 报告）：探测失败不再复用"离线"态——琥珀"离线"
+        # 被读成断网；显示中性 free_window 态，白天的真掉线语义不受影响。
         if not manual and self._in_free_window():
-            self.set_state("offline", "免认证时段：不自动登录（网络探测异常）")
+            self.set_state("free_window",
+                           "免认证时段：不自动登录（锚点间歇失败属夜间常态，网络通常可用）")
             return
         if time.monotonic() < max(self.reject_until, self._frozen_until):
             # 退避期间展示最近被拒原因（原因存 _reject_reason，与状态解耦：
@@ -1559,6 +1569,7 @@ TRAY_COLORS = {
     "rejected": (208, 95, 82),
     "paused": (139, 145, 155),
     "starting": (139, 145, 155),
+    "free_window": (139, 145, 155),
 }
 
 

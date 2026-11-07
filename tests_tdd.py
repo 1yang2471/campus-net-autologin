@@ -3224,6 +3224,55 @@ def t38b_free_window_silences_offline_path_and_freeze():
 
 check("免认证时段离线路径静默+冻结不自愈", t38b_free_window_silences_offline_path_and_freeze)
 
+
+def t44_free_window_anchor_fail_shows_calm_state():
+    """免认证时段的用户面（2026-11-07 早上用户报告：窗口内总显示"网络异常"
+    实际可用）：窗口内锚点间歇失败复用了白天的"离线"态——琥珀"离线"被读成
+    断网。修复：窗口内探测失败显示中性 free_window 态（灰、无异常语义），
+    自动登录照旧禁止（t38b 守）；白天的真掉线仍显示"离线"不变。"""
+    import keeper as _k
+    from shell.kernel_api import STATE_LABELS
+
+    k = _k.Keeper(_cfg(free_windows="00:00-24:00"))
+    logins = []
+
+    def _login():
+        logins.append(1)
+        return True, "ok"
+
+    k.portal_alive = lambda: True
+    k.clash_recover = lambda: None
+    k.do_login = _login
+    k.probe_online = lambda: False      # 锚点间歇失败（免认证时段常态）
+    k._last_login_at = 0.0
+    k.tick()
+    assert logins == [], "免认证时段不得自动登录"
+    assert k.state == "free_window", \
+        f"窗口内探测失败应显示中性免认证态，实际 {k.state!r}/{k.state_detail!r}"
+    assert STATE_LABELS.get("free_window") == "免认证时段", \
+        "新状态必须带用户可读的中文标签"
+
+
+check("免认证时段探测失败显示中性态", t44_free_window_anchor_fail_shows_calm_state)
+
+
+def t44_free_window_portal_down_shows_calm_state():
+    """窗口内门户不可达同样是常态（认证服务夜间不受理认证），不得把
+    白天的"认证服务器不可达"（琥珀、吓人）搬进窗口——同样落中性态。"""
+    import keeper as _k
+
+    k = _k.Keeper(_cfg(free_windows="00:00-24:00"))
+    k.probe_online = lambda: False
+    k.portal_alive = lambda: False       # 夜间认证服务不受理
+    k.clash_recover = lambda: None
+    k._last_login_at = 0.0
+    k.tick()
+    assert k.state == "free_window", \
+        f"窗口内门户不可达也应显示中性免认证态，实际 {k.state!r}/{k.state_detail!r}"
+
+
+check("免认证时段门户不可达显示中性态", t44_free_window_portal_down_shows_calm_state)
+
 print("== 循环39：IPv6 出口观察 + 熔断停时校准 ==")
 
 

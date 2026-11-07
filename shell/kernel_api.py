@@ -16,6 +16,7 @@ STATE_LABELS = {
     "rejected": "登录被拒",
     "paused": "自动重连已关闭",
     "starting": "启动中",
+    "free_window": "免认证时段",
 }
 
 STATE_COLORS = {
@@ -26,6 +27,7 @@ STATE_COLORS = {
     "rejected": "#d05f52",
     "paused": "#8b919b",
     "starting": "#8b919b",
+    "free_window": "#8b919b",
 }
 
 
