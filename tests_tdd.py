@@ -3981,6 +3981,36 @@ check("托盘显示熔断手动指引", t43_tray_shows_breaker_guidance)
 check("托盘带 DPI 与 IPv6 细节", t43_tray_carries_dpi_and_v6_detail)
 check("裸「勿重登」文案已清除", t43_no_bare_dont_relogin_phrase)
 
+print("== 循环47：对外文档不得否认已发布能力（dual_stack 事实守卫）==")
+
+# v1.0.13 已发布自动双栈补绑（keeper._dualstack_field → do_login 携带
+# ipv4or6，tests_tdd 循环45 三用例钉住）。README 若仍写「本版仍只观察、
+# 不自动补绑」「登录体没有这个字段」，用户会照旧绕道浏览器手动登录——
+# 白做一次可见断网。守卫钉住：文档不得落后于已发布能力。
+FORBIDDEN_DUALSTACK_CLAIMS = (
+    "只观察、不自动补绑",
+    "登录体没有这个字段",
+    "登录体目前不带该字段",
+    "与双栈修复同批改",
+)
+
+
+def t47_readme_matches_shipped_dualstack():
+    """dual_stack 已是 DEFAULTS 成员且 do_login 携带 ipv4or6 → README 与
+    keeper 的帮助文案不得残留「无此能力」类假话。"""
+    import keeper as _k
+    assert "dual_stack" in _k.DEFAULTS, "前置失效：dual_stack 不在 DEFAULTS"
+    root = Path(__file__).resolve().parent
+    offenders = []
+    for name in ("README.md", "keeper.py"):
+        text = (root / name).read_text(encoding="utf-8")
+        offenders += [(name, claim) for claim in FORBIDDEN_DUALSTACK_CLAIMS
+                      if claim in text]
+    assert not offenders, f"对外文档否认已发布能力: {offenders}"
+
+
+check("README 与已发布双栈能力一致", t47_readme_matches_shipped_dualstack)
+
 print(f"\n结果: PASS={len(PASS)} FAIL={len(FAIL)} SKIP={len(SKIP)}"
       + ("（真实门户项未启用）" if not LIVE and SKIP else ""))
 sys.exit(1 if FAIL else 0)
