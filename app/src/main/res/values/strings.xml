@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">校园网守护</string>
+    <string name="dev_title">开发者选项（M0 测量）</string>
+    <string name="channel_name">守护存活</string>
+    <string name="notif_title">校园网守护</string>
+</resources>

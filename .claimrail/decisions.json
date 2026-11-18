@@ -1,0 +1,196 @@
+{
+ "schema": 1,
+ "task_class": "ui-new",
+ "forks": [
+  {
+   "fork": "安卓首屏放什么（M0 测量仪表是 A1–A5 的判定依据，不是产品界面）",
+   "options": [
+    {
+     "label": "继续用 M0 测量仪表当首屏",
+     "target": {
+      "file": "app/src/main/java/dev/cnal/m0/MainActivity.kt",
+      "symbol": "MainActivity"
+     }
+    },
+    {
+     "label": "产品首屏（状态/启动/面板/切账号）+ M0 工具搬开发者选项",
+     "target": {
+      "file": "app/src/main/java/dev/cnal/m0/DeveloperActivity.kt",
+      "symbol": "DeveloperActivity"
+     }
+    },
+    {
+     "label": "守护在跑就直接进面板，没有落地页",
+     "target": {
+      "file": "app/src/main/java/dev/cnal/m0/LaunchRoute.kt",
+      "symbol": "LaunchRoute"
+     }
+    }
+   ],
+   "picked": "产品首屏（状态/启动/面板/切账号）+ M0 工具搬开发者选项",
+   "evidence": {
+    "kind": "memory",
+    "ref": "log#1",
+    "asserts": [
+     "安卓首屏用产品页"
+    ]
+   },
+   "target": {
+    "file": "app/src/main/java/dev/cnal/m0/MainActivity.kt",
+    "symbol": "MainActivity"
+   },
+   "cost_if_wrong": "low",
+   "verified": true
+  },
+  {
+   "fork": "后台保活策略（A1 实测 Doze 冻住线程；一直持锁费电，不持锁会被冻）",
+   "options": [
+    {
+     "label": "一直持 PARTIAL_WAKE_LOCK",
+     "target": {
+      "file": "app/src/main/java/dev/cnal/m0/KeeperService.kt",
+      "symbol": "syncWakeLock"
+     }
+    },
+    {
+     "label": "只在认证进行中 + 屏灭 + 门户可达时持锁，其余释放",
+     "target": {
+      "file": "app/src/main/java/dev/cnal/m0/PowerPolicy.kt",
+      "symbol": "PowerPolicy"
+     }
+    },
+    {
+     "label": "不持锁，只提示用户加电池白名单",
+     "target": {
+      "file": "app/src/main/java/dev/cnal/m0/PowerPolicy.kt",
+      "symbol": "shouldAskForWhitelist"
+     }
+    }
+   ],
+   "picked": "只在认证进行中 + 屏灭 + 门户可达时持锁，其余释放",
+   "evidence": {
+    "kind": "memory",
+    "ref": "log#2",
+    "asserts": [
+     "只在认证进行中 + 屏灭 + 门户可达时持 PARTIAL_WAKE_LOCK"
+    ]
+   },
+   "target": {
+    "file": "app/src/main/java/dev/cnal/m0/KeeperService.kt",
+    "symbol": "syncWakeLock"
+   },
+   "cost_if_wrong": "high",
+   "verified": true
+  },
+  {
+   "fork": "多账号密码怎么存（单槽只能存当前账号，面板 /accounts 切换会因无密码被拒）",
+   "options": [
+    {
+     "label": "继续单槽（user/iv/ct 三个 key）",
+     "target": {
+      "file": "app/src/main/java/dev/cnal/m0/CnalKernel.kt",
+      "symbol": "saveCredentials"
+     }
+    },
+    {
+     "label": "多槽密文账本 + 启动全量注入 Go 内存凭据库",
+     "target": {
+      "file": "app/src/main/java/dev/cnal/m0/AccountVault.kt",
+      "symbol": "AccountVault"
+     }
+    }
+   ],
+   "picked": "多槽密文账本 + 启动全量注入 Go 内存凭据库",
+   "evidence": {
+    "kind": "memory",
+    "ref": "log#3",
+    "asserts": [
+     "多槽密文账本（上限 5，旧单槽自动迁移）+ 启动全量注入 Go 内存凭据库"
+    ]
+   },
+   "target": {
+    "file": "app/src/main/java/dev/cnal/m0/CnalKernel.kt",
+    "symbol": "allCredentials"
+   },
+   "cost_if_wrong": "high",
+   "verified": true
+  },
+  {
+   "fork": "VPN 开着时守护怎么做（A4 不过的降级解；2026-11-18 grill-me 四问拍板）",
+   "options": [
+    {
+     "label": "有 VPN 就暂停自动登录：系统 TRANSPORT_VPN 判据，消失立即恢复+通知，探测展示照常",
+     "target": {
+      "file": "app/src/main/java/dev/cnal/m0/VpnGuard.kt",
+      "symbol": "VpnGuard"
+     }
+    },
+    {
+     "label": "只全局接管的 VPN 才暂停：读每条路由/per-app 规则（脆弱，违背通用）",
+     "target": {
+      "file": "app/src/main/java/dev/cnal/m0/KeeperService.kt",
+      "symbol": "onVpnFact"
+     }
+    },
+    {
+     "label": "手动开关，靠用户记得切（违背无感）",
+     "target": {
+      "file": "app/src/main/java/dev/cnal/m0/PanelActivity.kt",
+      "symbol": "settings"
+     }
+    }
+   ],
+   "picked": "有 VPN 就暂停自动登录：系统 TRANSPORT_VPN 判据，消失立即恢复+通知，探测展示照常",
+   "evidence": {
+    "kind": "memory",
+    "ref": "log#4",
+    "asserts": [
+     "VPN 判据=系统 TRANSPORT_VPN 事实",
+     "暂停期间探测/展示/心跳照常，只停登录",
+     "新增 SetAutoReconnect 内存热切换缝"
+    ]
+   },
+   "target": {
+    "file": "app/src/main/java/dev/cnal/m0/VpnGuard.kt",
+    "symbol": "VpnGuard"
+   },
+   "cost_if_wrong": "low",
+   "verified": true
+  },
+  {
+   "fork": "安卓公开门禁怎么补（2026-11-18 评估后用户拍板可补）",
+   "options": [
+    {
+     "label": "补 release 签名（密钥仓库外+口令 keyring）+ 首屏异校劝退，两端都可公开有条件",
+     "target": {
+      "file": "scripts/build-release.ps1",
+      "symbol": "build-release"
+     }
+    },
+    {
+     "label": "不补，安卓继续不建议公开（用户否决）",
+     "target": {
+      "file": "docs/2026-11-18-公开发布评估.md",
+      "symbol": "旧结论"
+     }
+    }
+   ],
+   "picked": "补 release 签名（密钥仓库外+口令 keyring）+ 首屏异校劝退，两端都可公开有条件",
+   "evidence": {
+    "kind": "memory",
+    "ref": "log#5",
+    "asserts": [
+     "keystore 在仓库外",
+     "口令只在 Windows Credential Manager",
+     "首屏异校劝退 SupportNotice"
+    ]
+   },
+   "target": {
+    "file": "scripts/build-release.ps1",
+    "symbol": "build-release"
+   },
+   "cost_if_wrong": "high",
+   "verified": true
+  }
+ ]
+}

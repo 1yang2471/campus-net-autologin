@@ -1,0 +1,3 @@
+{"kind":"rejection","key":"android-first-screen","what":"安卓首屏用产品页（状态/启动/面板/切账号），M0 测量仪表搬开发者选项","why":"M0 仪表是 A1–A5 判定依据不是产品界面；守护在跑且面板 URL 就绪时直达面板","at":1}
+{"kind":"rejection","key":"android-wakelock-policy","what":"只在认证进行中 + 屏灭 + 门户可达时持 PARTIAL_WAKE_LOCK，其余释放","why":"A1 实证 Doze 冻住线程；一直持锁费电，不持锁会被冻，另发一次性电池白名单提示","at":2}
+{"kind":"rejection","key":"android-multi-account-vault","what":"多槽密文账本（上限 5，旧单槽自动迁移）+ 启动全量注入 Go 内存凭据库","why":"单槽只能存当前账号，面板 /accounts 切换到历史账号会因无密码被拒","at":3}

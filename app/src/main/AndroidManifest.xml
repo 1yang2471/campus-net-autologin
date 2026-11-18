@@ -1,0 +1,54 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <!-- CHANGE_NETWORK_STATE：bindProcessToNetwork 需要（A4 的前提）。 -->
+    <uses-permission android:name="android.permission.CHANGE_NETWORK_STATE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <!-- Android 14+ 必须声明前台服务类型；specialUse 不在 6h/24h 超时名单里，
+         BOOT_COMPLETED 也不在 Android 15 的禁启名单里（android-plan §4.1）。 -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+    <!-- Android 13+ 运行时权限：拒了服务仍能起，但通知只在任务管理器可见。 -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- WAKE_LOCK：屏灭后持 PARTIAL_WAKE_LOCK 让 tick 不被 Doze 冻住
+         （A1 实证：进程/服务/线程都在，只是不执行）。只在认证进行中持。 -->
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+
+    <application
+        android:allowBackup="false"
+        android:label="@string/app_name"
+        android:networkSecurityConfig="@xml/network_security_config"
+        android:supportsRtl="true"
+        android:theme="@android:style/Theme.Material.Light">
+        <activity
+            android:name=".MainActivity"
+            android:exported="true"
+            android:label="@string/app_name">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+        <!-- 开发者选项（M0 测量仪表）：非首屏，不设 intent-filter，只由 MainActivity
+             跳转。A1–A5 的测量界面与产品首屏分离，用户日常看不到。 -->
+        <activity
+            android:name=".DeveloperActivity"
+            android:exported="false"
+            android:label="@string/dev_title" />
+        <!-- M1 面板容器：WebView 加载 Go 内核回路。exported=false，只由本 app 起。 -->
+        <activity
+            android:name=".PanelActivity"
+            android:exported="false"
+            android:label="@string/app_name" />
+
+        <service
+            android:name=".KeeperService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="campus network session keeper (M0 measurement harness)" />
+        </service>
+    </application>
+</manifest>
