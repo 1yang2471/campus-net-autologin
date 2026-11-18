@@ -16,25 +16,29 @@ func (d *Daemon) probeSession() {
 	if !d.sessAt.IsZero() && now.Sub(d.sessAt) < sessionProbeInterval {
 		return // 60s 节流（同 l2At/v6At）：会话真值不是心跳
 	}
+	d.probeSessionOnce(now)
+}
+
+// probeSessionOnce 执行一次会话核实并更新判死状态；返回 (known, alive)。
+// L1 绿（60s 心跳）与 L1 红（用户路径断，立即核实）共用，保证两条路径
+// 对「会话真值」的定义一致。
+func (d *Daemon) probeSessionOnce(now time.Time) (known, alive bool) {
 	d.sessAt = now
-	var (
-		alive bool
-		err   error
-	)
 	if d.SessionAlive != nil {
-		// 会话级优先：flux 是账号级读数，会话被释放后它照样有数据（11-11 实证）。
-		alive, err = d.SessionAlive()
-	} else if d.FetchFlux != nil {
-		var flux map[string]string
-		flux, err = d.FetchFlux()
-		alive = len(flux) > 0
-		if err == nil {
-			// 复用这一次读数给流量视图，避免同拍 pollFlux 再打一次门户。
-			d.updateFluxView(flux, now)
+		a, err := d.SessionAlive()
+		if err != nil {
+			return false, false
 		}
-	}
-	if err != nil {
-		return
+		alive, known = a, true
+	} else if d.FetchFlux != nil {
+		flux, err := d.FetchFlux()
+		if err != nil {
+			return false, false
+		}
+		alive, known = len(flux) > 0, true
+		d.updateFluxView(flux, now) // 复用这一次读数给流量视图，避免同拍再打一次门户
+	} else {
+		return false, false
 	}
 	if alive {
 		d.sessMiss = 0
@@ -42,12 +46,59 @@ func (d *Daemon) probeSession() {
 		d.suspect = 0               // 会话活 = 判定链健康证明（Python 在线分支清 suspect）
 		d.rejectUntil = time.Time{} // 同源：在线分支清 reject_until
 		d.sessFalse = 0             // 拿得到真值 = 门户支持该探针且会话健康
-		return
+		return true, true
 	}
 	d.sessMiss++
 	if d.sessMiss >= d.sessionMissThreshold() {
 		d.setSessionDead(true)
 	}
+	return true, false
+}
+
+// l1RedSessionInterval L1 红时会话核实的下限（不是心跳）：用户路径一断，
+// 立即问一次门户；之后最多每 10s 一次，避免每拍打 online_check。
+const l1RedSessionInterval = 10 * time.Second
+
+// probeSessionOnL1Red 在 L1 红时核实会话真值（2026-11-18：门户说在线就
+// 不登录，说没登录才登录）。返回 (dead, known)：
+//
+//	known=false → 真值不可得（无探针/门户不可达/自停期），调用方回落去抖；
+//	known=true, dead=false → 认证正常，不登录（锚点红是 L2/线路问题）；
+//	known=true, dead=true  → 允许登录（跳过 L1 三拍去抖：会话真值是权威证据）。
+func (d *Daemon) probeSessionOnL1Red(now time.Time) (dead, known bool) {
+	// 只认会话级真值（online_check）。flux 是账号级读数——会话被释放后它
+	// 照样有数据（2026-11-11 实证），拿它做 L1 红的即时判据会压掉必要的
+	// 重连（免会话态退出时尤其明显）。没有会话级探针就回落 L1 去抖。
+	if d.SessionAlive == nil {
+		return false, false
+	}
+	if now.Before(d.fluxOffUntil) {
+		return false, false
+	}
+	if !d.sessRedAt.IsZero() && now.Sub(d.sessRedAt) < l1RedSessionInterval {
+		return !d.sessRedAlive, d.sessRedKnown
+	}
+	d.sessRedAt = now
+	known, alive := d.probeSessionOnce(now)
+	d.sessRedKnown = known
+	d.sessRedAlive = alive
+	return !alive, known
+}
+
+// invalidateSessionCache 登录成功后作废 L1 红时的会话缓存：下一次 L1 红拍
+// 必须重新问门户，不能拿登录前的「死」结论重复判断。
+func (d *Daemon) invalidateSessionCache() {
+	d.sessRedAt = time.Time{}
+}
+
+// sessionAliveL1RedDetail 认证在线但锚点红时的状态行（双读数的前身：认证
+// 读数正常，用户路径/线路异常）。L2 观察作为附属信息，不抢主句。
+func (d *Daemon) sessionAliveL1RedDetail() string {
+	base := "认证在线（锚点异常，会话正常）"
+	if extra := d.onlineDetail(); extra != "" {
+		return base + "｜" + extra
+	}
+	return base
 }
 
 // sessionMissThreshold 判死需要几拍「不在线」。

@@ -77,6 +77,13 @@ type Daemon struct {
 	// OnPortalDown 门户不可达拍（窗口外）——组合根借此重发现物理源
 	// （网络切换/休眠唤醒后旧源失效会表现为长期 portal_down）。
 	OnPortalDown func()
+	// EgressHealth 服务出口健康（nil = 未接线，按健康处理）：绑定失效/门户
+	// 不可达是登录的前置门槛，不健康时绝不发凭据（2026-11-18 三连登录实证）。
+	EgressHealth func() EgressHealth
+	// OnEgressInvalid 出口失效拍（窗口外）——组合根借此立即重选物理源。
+	// 与 OnPortalDown 分开：一个是「本地绑定坏了」，一个是「门户够不着」，
+	// 原因与重选时机不同，不合并成一个回调。
+	OnEgressInvalid func()
 	// ProbeL2 出口策略观察（L2 DPI）：返回 "restricted"（大众站被 RST）/
 	// "ok"；nil = 未接线。只观察，绝不参与判定——对抗 DPI 属违规。
 	ProbeL2 func() string
@@ -135,6 +142,11 @@ type Daemon struct {
 	v6At          time.Time // 上次 v6 观察时刻（60s 节流）
 	l2At          time.Time // 上次 L2 观察时刻（60s 节流）
 	sessAt        time.Time // 上次会话探针时刻（60s 节流）
+	// sessRedAt/sessRedKnown/sessRedAlive L1 红时的会话核实缓存（10s 下限）：
+	// 用户路径一断立即问一次门户，之后节流期内复用结论，避免每拍打 online_check。
+	sessRedAt    time.Time
+	sessRedKnown bool
+	sessRedAlive bool
 	l2Restricted  bool      // 最近一次 L2 观察结果
 	l2WindowUntil time.Time // L2 受限提示保留窗口（恢复后仍提示 2×周期）
 	offlineStreak int       // L1 连续失败拍数（登录去抖；锚点绿即清零）
@@ -196,6 +208,7 @@ func (d *Daemon) Tick() {
 	l1 := d.ProbeOnline()
 	if l1 {
 		d.offlineStreak = 0
+		d.sessRedAt = time.Time{} // L1 恢复即作废红态缓存：下次红拍重新核实
 	} else {
 		d.offlineStreak++
 	}
@@ -211,7 +224,29 @@ func (d *Daemon) Tick() {
 		}
 		// 假在线封堵：锚点绿但会话死（t37）→ 落到重连路径（G4 接登录）
 	}
-	if !d.PortalAlive() {
+	// 服务出口门槛先于一切登录动作（2026-11-18 三连登录实证）：本地绑定
+	// 失效或绑源到不了门户时，登录只会走到另一条路（系统栈）——探针永远
+	// 不绿、预算白烧、还会触发自伤熔断。先报状态，让组合根重选出口。
+	portalAlive := d.PortalAlive()
+	if eg := d.egress(); !eg.Valid {
+		if d.inFreeWindow() {
+			d.setState(StateFreeWindow, "免认证时段（无需登录）")
+			return
+		}
+		if eg.Reason == EgressPortalUnreachable {
+			if d.OnPortalDown != nil {
+				d.OnPortalDown()
+			}
+			d.setState(StatePortalDown, egressDetail(eg))
+			return
+		}
+		if d.OnEgressInvalid != nil {
+			d.OnEgressInvalid()
+		}
+		d.setState(StateOffline, egressDetail(eg))
+		return
+	}
+	if !portalAlive {
 		if d.inFreeWindow() {
 			d.setState(StateFreeWindow, "免认证时段（无需登录）")
 			return
@@ -243,12 +278,27 @@ func (d *Daemon) Tick() {
 	// L1 连续失败去抖（2026-11-13 登录风暴实证）：单拍探测失败如实报离线，
 	// 但不触发登录；连续 offlineLoginDebounce 拍失败才进入重连。计数在锚点
 	// 恢复时清零（短暂抖动不累积）。会话判死不在此列——它走 L1 绿分支。
+	//
+	// 2026-11-18 修正：L1 红时先核实门户会话真值——门户说在线就不登录
+	//（锚点红是 L2/线路问题，登录修不了），说没登录才允许登录；真值不可得
+	// 才回落三拍去抖。
+	now := d.Now()
+	if !l1 {
+		if dead, known := d.probeSessionOnL1Red(now); known {
+			if !dead {
+				d.offlineStreak = 0
+				d.setState(StateOnline, d.sessionAliveL1RedDetail())
+				return
+			}
+			// 会话真值是权威证据：跳过 L1 三拍去抖，直接进登录闸。
+			d.offlineStreak = offlineLoginDebounce
+		}
+	}
 	if !l1 && d.offlineStreak < offlineLoginDebounce {
 		d.setState(StateOffline, "")
 		return
 	}
 	// 登录风暴三闸（Python tick 同序：退避先于全局节流）。
-	now := d.Now()
 	if now.Before(d.rejectUntil) || now.Before(d.frozenUntil) {
 		d.setState(StateRejected, "退避中：上次登录未修好问题，暂停重连")
 		return
@@ -268,6 +318,7 @@ func (d *Daemon) Tick() {
 			d.setSessionDead(false)
 			d.setFreeMode(false)
 			d.freeStreak = 0
+			d.invalidateSessionCache() // 登录后会话已变：下次 L1 红须重新问门户
 			// SESSION_FALSE 自停闸：判死→重登→门户答「已在线」= flux 在撒谎，
 			// 矛盾 ×3 → 探针自停 3600s（假判死不得变成登录风暴）。
 			if wasDead && alreadyOnline(resp) {
@@ -291,6 +342,24 @@ func (d *Daemon) Tick() {
 			d.setState(StateOnline, "")
 			return
 		} else {
+			// 出口在门槛放行后失效：这次登录没有发出，不能算一次尝试——
+			// 清掉 lastLogin、不进退避/熔断，报状态并请组合根重选。
+			if errors.Is(err, ErrEgressInvalid) {
+				d.lastLogin = time.Time{}
+				d.setState(StateOffline, err.Error())
+				if d.OnEgressInvalid != nil {
+					d.OnEgressInvalid()
+				}
+				return
+			}
+			if errors.Is(err, ErrEgressPortalUnreachable) {
+				d.lastLogin = time.Time{}
+				d.setState(StatePortalDown, err.Error())
+				if d.OnPortalDown != nil {
+					d.OnPortalDown()
+				}
+				return
+			}
 			// 门户限频冻结：独立闸门（Python _frozen_until 同源）——普通退避
 			// 会被 flux 复活清零，冻结闸不会，否则「抖动→放行→再撞→更深冻结」。
 			if frozen, wait := freezeWait(err.Error(), d.marks, d.rejectBackoff); frozen {

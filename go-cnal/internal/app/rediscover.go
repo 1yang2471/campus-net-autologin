@@ -35,3 +35,16 @@ func (r *rediscoverer) tick(now time.Time) {
 	r.current = fresh
 	r.apply(fresh)
 }
+
+// force 绑定失效时立即重选一次（不等 interval）：死源留在绑定位上每多一秒，
+// 都在放大「探测/动作两套网络观」的窗口。自带 5s 下限——内核每拍都会报
+// 出口失效，不能每拍都重新探测一遍所有候选。
+const forceMinInterval = 5 * time.Second
+
+func (r *rediscoverer) force(now time.Time) {
+	if !r.last.IsZero() && now.Sub(r.last) < forceMinInterval {
+		return
+	}
+	r.last = time.Time{}
+	r.tick(now)
+}

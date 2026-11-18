@@ -140,3 +140,75 @@ func TestCandidateSourcesAreUsable(t *testing.T) {
 		}
 	}
 }
+
+// 候选源健康记忆（2026-11-18 多源抖动实证）：选中的源可能几十秒后就死
+// （17:47:39 选中 10.141.53.34，17:48:19 绑源 DNS 超时；17:56:13 选中
+// 10.158.52.162，17:56:40 bind 失效）。Down 后 60s 内 Refresh 必须跳过它，
+// 否则会反复选回刚死的候选；窗口过期后重新参与。
+
+func TestSourcePickerSkipsDownCandidate(t *testing.T) {
+	a := net.IPv4(10, 158, 52, 162)
+	b := net.IPv4(172, 29, 153, 208)
+	now := time.Unix(0, 0)
+	p := NewSourcePicker(
+		func() []net.IP { return []net.IP{a, b} },
+		func(net.IP) error { return nil })
+	p.now = func() time.Time { return now }
+
+	got, err := p.Refresh()
+	if err != nil || !got.Equal(a) {
+		t.Fatalf("前置：应先选中首个候选 %s，实际 %v/%v", a, got, err)
+	}
+	p.Down(a, now)
+
+	got, err = p.Refresh()
+	if err != nil || !got.Equal(b) {
+		t.Fatalf("降级后应跳过 %s 选 %s，实际 %v/%v", a, b, got, err)
+	}
+	now = now.Add(59 * time.Second)
+	got, err = p.Refresh()
+	if err != nil || !got.Equal(b) {
+		t.Fatalf("降级窗口内仍应跳过 %s，实际 %v/%v", a, got, err)
+	}
+	now = now.Add(2 * time.Second)
+	got, err = p.Refresh()
+	if err != nil || !got.Equal(a) {
+		t.Fatalf("降级过期后 %s 应重新参与，实际 %v/%v", a, got, err)
+	}
+}
+
+// 行为：全部候选都在降级期 → 不探测、报错，并逐个说明「降级中」；调用方
+// 据此保持原绑定（fail-closed，不拿坏源反复试）。
+func TestSourcePickerAllDownReportsCooldown(t *testing.T) {
+	a := net.IPv4(10, 141, 53, 34)
+	probes := 0
+	p := NewSourcePicker(
+		func() []net.IP { return []net.IP{a} },
+		func(net.IP) error { probes++; return nil })
+	p.now = func() time.Time { return time.Unix(0, 0) }
+
+	if _, err := p.Refresh(); err != nil {
+		t.Fatalf("前置：首次应选中 %s: %v", a, err)
+	}
+	p.Down(a, time.Unix(0, 0))
+	probes = 0
+	got, err := p.Refresh()
+	if err == nil {
+		t.Fatal("全部候选降级时必须报错")
+	}
+	if probes != 0 {
+		t.Fatalf("降级候选不得再探测，实际探测 %d 次", probes)
+	}
+	if got != nil && !got.Equal(a) {
+		t.Errorf("无可用候选时应保留原源，实际 %v", got)
+	}
+	if !strings.Contains(p.Summary(), "降级中") {
+		t.Errorf("摘要须说明降级，实际 %q", p.Summary())
+	}
+}
+
+// 行为：Down(nil) 安全（组合根在无当前源时也会调用）。
+func TestSourcePickerDownNilSafe(t *testing.T) {
+	p := NewSourcePicker(func() []net.IP { return nil }, func(net.IP) error { return nil })
+	p.Down(nil, time.Now())
+}
