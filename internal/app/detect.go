@@ -4,11 +4,13 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"net/http"
 	"net/url"
 	"regexp"
 	"strings"
 	"time"
 
+	"cnal/internal/keeper"
 	"cnal/internal/netstack"
 	"cnal/internal/protocol"
 )
@@ -24,12 +26,12 @@ func defaultProbeIPs() []string { return []string{"223.5.5.5", "119.29.29.29"} }
 
 // DetectOptions 首跑门户探测输入；零值 = 通用默认。
 type DetectOptions struct {
-	CampusDNS string        // 空 = 系统 DNS 回退（TUN 下可能给 fake-ip）
-	BindIP    string        // 物理源逃生口（空 = 自动发现）
-	ProbeIPs  []string      // 公网锚点（空 = 223.5.5.5,119.29.29.29）
-	ProbePath string        // 锚点路径（空 = /generate_204）
-	ProbeHost string        // 锚点 Host 头（空 = connect.rom.miui.com）
-	LoginPage string        // 门户登录页（空 = ac_portal 族默认）
+	CampusDNS string   // 空 = 系统 DNS 回退（TUN 下可能给 fake-ip）
+	BindIP    string   // 物理源逃生口（空 = 自动发现）
+	ProbeIPs  []string // 公网锚点（空 = 223.5.5.5,119.29.29.29）
+	ProbePath string   // 锚点路径（空 = /generate_204）
+	ProbeHost string   // 锚点 Host 头（空 = connect.rom.miui.com）
+	LoginPage string   // 门户登录页（空 = ac_portal 族默认）
 	// LoginPageMarks 门户登录页指纹（空 = ac_portal/pwdLogin）。异校必须可配：
 	// 真机实测本校登录页正文不含这两串（表单 JS 渲染），默认指纹恒失败。
 	LoginPageMarks []string
@@ -284,4 +286,51 @@ func isRedirect(st int) bool {
 		return true
 	}
 	return false
+}
+
+// ConfirmOptions 行为确认（指纹快筛未命中后的第二路径）输入。与 DetectOptions
+// 解耦：DetectPortal 的签名和默认行为一律不动，本路径只由首跑向导在用户坚持
+// 时显式调用。凭据用测试假值或调用方注入，绝不进配置文件、不来自 keyring。
+type ConfirmOptions struct {
+	LoginURL string               // 登录端点完整地址（由调用方给出，本函数不猜地址）
+	Method   string               // GET/POST（空 = POST；大小写不敏感）
+	Form     map[string]string    // 表单字段（占位凭据由调用方注入假值）
+	Marks    keeper.ResponseMarks // 成功/失败词表（零值字段回落默认，与守护同语义）
+	// Send 发包缝：按给定 method/url/form 真发一次探测，返回门户响应原文。
+	// 生产接线应走物理栈钉 IP（同守护 Deliver）；测试注入替身，不触网。
+	Send func(method, loginURL string, form map[string]string) (string, error)
+}
+
+// ConfirmPortalByLogin 行为确认：真发一次登录探测，用守护同款判定链
+// （keeper.JudgeLoginResponse，复用 ResponseMarks/已在线哨兵，不另造词表逻辑）
+// 判响应。返回 (可用, 证据文案, 系统错误)：
+//   - 命中成功词（含「已在线」哨兵）→ 可用=true，证据说明命中；
+//   - 命中失败词/判负 → 可用=false，err=nil，证据点明「词表可能不匹配」——
+//     这是有效结论而非系统错误：多半是异校成功词没进词表，提示用户校准 [response]；
+//   - 发包失败 → 可用=false，err 上抛（errors.Is 可追根因），与「判负」区分。
+//
+// 加密族（RC4/MD5/SRBX1）不在支持范围：本路径发的是明文假凭据，这类门户答不出
+// 成功词，自然判负——不为此另加探测分支，保持单一判定链。
+func ConfirmPortalByLogin(opt ConfirmOptions) (bool, string, error) {
+	if opt.Send == nil {
+		return false, "", errors.New("行为确认缺少发包缝（Send 为空）")
+	}
+	method := strings.ToUpper(strings.TrimSpace(opt.Method))
+	if method == "" {
+		method = http.MethodPost
+	}
+	if method != http.MethodGet && method != http.MethodPost {
+		return false, "", fmt.Errorf("不支持的行为确认方法 %q（仅 GET/POST）", method)
+	}
+	resp, err := opt.Send(method, opt.LoginURL, opt.Form)
+	if err != nil {
+		return false, "", fmt.Errorf("行为确认发包失败：%w", err)
+	}
+	if _, err := keeper.JudgeLoginResponse(resp, opt.Marks); err != nil {
+		// 判负是有效结论，不是系统错误——把门户原文一并放进证据，便于用户校准
+		// [response] 词表（异校最常见的误判来源）。
+		reason := strings.TrimPrefix(err.Error(), "登录未受理: ")
+		return false, fmt.Sprintf("行为探测被判负（%s）：响应词表可能不匹配，请核对 [response] 词表后重试", reason), nil
+	}
+	return true, "行为探测命中成功词表（含已在线语义），门户可用", nil
 }

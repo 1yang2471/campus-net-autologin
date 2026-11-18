@@ -528,6 +528,41 @@
    },
    "cost_if_wrong": "low",
    "verified": true
+  },
+  {
+   "fork": "协议层通用化怎么在有限条件下做（2026-11-18 grill-me 五问）",
+   "options": [
+    {
+     "label": "明文 GET/POST+指纹快筛与行为确认+语料回放判据；加密族不支持",
+     "target": {
+      "file": "internal/app/confirm_wiring.go",
+      "symbol": "ConfirmSetupPortal"
+     }
+    },
+    {
+     "label": "做加密插件适配器/内嵌 JS 引擎（超有限条件，否决）",
+     "target": {
+      "file": "internal/protocol/form.go",
+      "symbol": "ParseForm"
+     }
+    }
+   ],
+   "picked": "明文 GET/POST+指纹快筛与行为确认+语料回放判据；加密族不支持",
+   "evidence": {
+    "kind": "memory",
+    "ref": "log#32",
+    "asserts": [
+     "只覆盖明文 GET/POST",
+     "指纹快筛+行为确认双路径",
+     "公开语料回放+模拟门户e2e"
+    ]
+   },
+   "target": {
+    "file": "internal/app/confirm_wiring.go",
+    "symbol": "ConfirmSetupPortal"
+   },
+   "cost_if_wrong": "low",
+   "verified": true
   }
  ]
 }

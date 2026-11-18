@@ -244,6 +244,16 @@ func deliverPinned(cfg daemonConfig, p *plumbing, form map[string]string) (strin
 	if r.client == nil {
 		return "", errNoRoute
 	}
+	// GET 型登录（Dr.COM/Srun 明文族）：参数走 query、body 空，form 的
+	// Content-Type 无意义——netstack 不自动设，这里也不能显式带。
+	if cfg.LoginForm.Method == "GET" {
+		return r.client.GetPinned(cfg.Server+cfg.LoginPath, form,
+			map[string]string{
+				"User-Agent": cfg.UserAgent, // 门户 WAF 校事实（Python _headers 同源）
+				"Referer":    cfg.Server + cfg.LoginPage,
+			}, r.pin)
+	}
+	// POST/默认：保持既有行为一字不改。
 	return r.client.PostPinned(cfg.Server+cfg.LoginPath, form,
 		map[string]string{
 			"Content-Type": "application/x-www-form-urlencoded",
