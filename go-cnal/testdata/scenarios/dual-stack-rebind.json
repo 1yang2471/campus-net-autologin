@@ -1,0 +1,30 @@
+{
+  "name": "双栈补绑：v4 在线 + v6 未在线 → 搭车登录 → v6 转在线",
+  "note": "形态取自 2026-11-06 实测 E3/E4/E5；地址用 RFC3842/RFC5737 文档段，账号为假值",
+  "steps": [
+    {
+      "when": "握手 v6 侧",
+      "request":  {"opr": "ipv4or6online"},
+      "response": "{'success':true, 'ip':'2001:db8:1::19', 'isOnline':false}",
+      "expect":   {"peerState": "offline"}
+    },
+    {
+      "when": "握手 v4 侧",
+      "request":  {"opr": "ipv4or6online"},
+      "response": "{'success':true, 'ip':'192.0.2.7', 'isOnline':true}",
+      "expect":   {"selfState": "online"}
+    },
+    {
+      "when": "登录（搭车带对端地址）",
+      "request":  {"opr": "pwdLogin", "userName": "u", "pwd": "p", "rememberPwd": "1", "ipv4or6": "2001:db8:1::19"},
+      "response": "{'success':true, 'msg':'logon success','action':'logout'}",
+      "expect":   {"loginOK": true, "alreadyOnline": false}
+    },
+    {
+      "when": "握手 v6 侧（复查）",
+      "request":  {"opr": "ipv4or6online"},
+      "response": "{'success':true, 'ip':'2001:db8:1::19', 'isOnline':true}",
+      "expect":   {"peerState": "online"}
+    }
+  ]
+}

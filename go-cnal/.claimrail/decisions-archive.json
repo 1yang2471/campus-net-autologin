@@ -1,0 +1,667 @@
+{
+ "schema": 1,
+ "task_class": "api-design",
+ "forks": [
+  {
+   "fork": "切账号事件记在哪（真机实证 p.logf 在安卓只进内存数组，状态日志无行，事故复盘会漏证据）",
+   "options": [
+    {
+     "label": "继续只写 p.logf（stdout/内存）",
+     "target": {
+      "file": "internal/app/compose_api.go",
+      "symbol": "SwitchAccount"
+     }
+    },
+    {
+     "label": "补写状态日志文件（AppendEvent，与状态迁移同文件）",
+     "target": {
+      "file": "internal/app/event_log.go",
+      "symbol": "AppendEvent"
+     }
+    },
+    {
+     "label": "只记到 LogsJSON 内存日志",
+     "target": {
+      "file": "mobile/mobile.go",
+      "symbol": "sourceLog"
+     }
+    }
+   ],
+   "picked": "补写状态日志文件（AppendEvent，与状态迁移同文件）",
+   "evidence": {
+    "kind": "memory",
+    "ref": "log#10",
+    "asserts": [
+     "切账号事件补写状态日志文件"
+    ]
+   },
+   "target": {
+    "file": "internal/app/compose_api.go",
+    "symbol": "SwitchAccount"
+   },
+   "cost_if_wrong": "low",
+   "verified": true
+  },
+  {
+   "fork": "「做好了吗」用哪把尺子量",
+   "options": [
+    {
+     "label": "本校单机可用即算做好",
+     "target": {
+      "file": "docs/2026-11-12-产品级验收第一性原理复盘.md",
+      "symbol": "ruler"
+     }
+    },
+    {
+     "label": "换校自助才算做好",
+     "target": {
+      "file": "docs/2026-11-12-产品级验收第一性原理复盘.md",
+      "symbol": "generality"
+     }
+    },
+    {
+     "label": "产品级全验收才算",
+     "target": {
+      "file": "docs/android-a1-a5-testplan.md",
+      "symbol": "A1-A5"
+     }
+    }
+   ],
+   "picked": "产品级全验收才算",
+   "evidence": {
+    "kind": "memory",
+    "ref": "log#11",
+    "asserts": [
+     "产品级全验收才算做好"
+    ]
+   },
+   "target": {
+    "file": "docs/2026-11-12-产品级验收第一性原理复盘.md",
+    "symbol": "ruler"
+   },
+   "cost_if_wrong": "high",
+   "verified": true
+  },
+  {
+   "fork": "物理源怎么选（路由 metric 只说去公网走哪条，认证网关可达性会随时间变）",
+   "options": [
+    {
+     "label": "按路由表选（现状 DiscoverSource）",
+     "target": {
+      "file": "internal/netstack/discover.go",
+      "symbol": "DiscoverSource"
+     }
+    },
+    {
+     "label": "bind_ip 手工钉死一个源",
+     "target": {
+      "file": "internal/app/compose_portal.go",
+      "symbol": "newPlumbing"
+     }
+    },
+    {
+     "label": "候选源逐个做门户可达性探测，选第一个通的",
+     "target": {
+      "file": "internal/netstack/sourcepicker.go",
+      "symbol": "SourcePicker"
+     }
+    }
+   ],
+   "picked": "候选源逐个做门户可达性探测，选第一个通的",
+   "evidence": {
+    "kind": "memory",
+    "ref": "log#2",
+    "asserts": [
+     "按门户可达性探测选"
+    ]
+   },
+   "target": {
+    "file": "internal/netstack/sourcepicker.go",
+    "symbol": "SourcePicker"
+   },
+   "cost_if_wrong": "high",
+   "verified": true
+  },
+  {
+   "fork": "门户路径（绑源钉 IP / 系统栈）要不要给用户看",
+   "options": [
+    {
+     "label": "只写状态日志",
+     "target": {
+      "file": "internal/app/portalroute.go",
+      "symbol": "noteRoute"
+     }
+    },
+    {
+     "label": "面板加一行「门户路径」",
+     "target": {
+      "file": "internal/api/api.go",
+      "symbol": "Snapshot"
+     }
+    }
+   ],
+   "picked": "面板加一行「门户路径」",
+   "evidence": {
+    "kind": "memory",
+    "ref": "log#3",
+    "asserts": [
+     "面板要有一行门户路径"
+    ]
+   },
+   "target": {
+    "file": "internal/api/api.go",
+    "symbol": "Snapshot"
+   },
+   "cost_if_wrong": "low",
+   "verified": true
+  },
+  {
+   "fork": "会话存活判据用哪个信号（userflux 是账号级，会话释放后仍有数据）",
+   "options": [
+    {
+     "label": "继续用 userflux（现状）",
+     "target": {
+      "file": "internal/keeper/daemon.go",
+      "symbol": "probeSession"
+     }
+    },
+    {
+     "label": "改用会话级 online_check（无凭据，绑源）",
+     "target": {
+      "file": "internal/keeper/daemon.go",
+      "symbol": "SessionAlive"
+     }
+    },
+    {
+     "label": "两个都查，任一说死就判死",
+     "target": {
+      "file": "internal/keeper/daemon.go",
+      "symbol": "probeSession"
+     }
+    }
+   ],
+   "picked": "改用会话级 online_check（无凭据，绑源）",
+   "evidence": {
+    "kind": "memory",
+    "ref": "log#4",
+    "asserts": [
+     "会话级 online_check"
+    ]
+   },
+   "target": {
+    "file": "internal/keeper/daemon.go",
+    "symbol": "SessionAlive"
+   },
+   "cost_if_wrong": "high",
+   "verified": true
+  },
+  {
+   "fork": "首跑门户探测的登录页指纹怎么适配异校（本校 JS 渲染页不含 ac_portal/pwdLogin）",
+   "options": [
+    {
+     "label": "把本校的「上网认证系统」加进默认指纹",
+     "target": {
+      "file": "internal/app/detect.go",
+      "symbol": "defaultLoginPageMarks"
+     }
+    },
+    {
+     "label": "做成 ini 可配 login_page_marks，默认仍是通用族指纹",
+     "target": {
+      "file": "internal/app/detect.go",
+      "symbol": "verifyPortalLogin"
+     }
+    },
+    {
+     "label": "一律跳过登录页指纹复核，只看 302 Location",
+     "target": {
+      "file": "internal/app/detect.go",
+      "symbol": "DetectPortal"
+     }
+    }
+   ],
+   "picked": "做成 ini 可配 login_page_marks，默认仍是通用族指纹",
+   "evidence": {
+    "kind": "memory",
+    "ref": "log#5",
+    "asserts": [
+     "做成 ini 可配 login_page_marks"
+    ]
+   },
+   "target": {
+    "file": "internal/app/detect.go",
+    "symbol": "verifyPortalLogin"
+   },
+   "cost_if_wrong": "high",
+   "verified": true
+  },
+  {
+   "fork": "切账号时同网卡的其它公网 IPv6 会话怎么处理（Windows 隐私临时地址是独立门户会话；2026-11-11 实测：v4 与主 v6 已换、临时地址仍归旧账号）",
+   "options": [
+    {
+     "label": "只搬主地址（现状，IPv6 留旧账号）",
+     "target": {
+      "file": "internal/app/switch.go",
+      "symbol": "sessionOps"
+     }
+    },
+    {
+     "label": "注销所有本地公网 v6 并按地址重登新账号",
+     "target": {
+      "file": "internal/app/switch.go",
+      "symbol": "switchAccount"
+     }
+    },
+    {
+     "label": "只提示不搬，让用户手动注销",
+     "target": {
+      "file": "internal/app/switch.go",
+      "symbol": "switchReport"
+     }
+    }
+   ],
+   "picked": "注销所有本地公网 v6 并按地址重登新账号",
+   "evidence": {
+    "kind": "memory",
+    "ref": "log#6",
+    "asserts": [
+     "注销同网卡所有公网 IPv6 会话"
+    ]
+   },
+   "target": {
+    "file": "internal/app/switch.go",
+    "symbol": "switchAccount"
+   },
+   "cost_if_wrong": "high",
+   "verified": true
+  },
+  {
+   "fork": "面板首屏的「切账号」入口放哪（账号列表唯一出处仍是 /accounts）",
+   "options": [
+    {
+     "label": "只留在设置页，首屏无入口",
+     "target": {
+      "file": "cmd/cnalw/panel.html",
+      "symbol": "view-status"
+     }
+    },
+    {
+     "label": "状态页加导航捷径，跳到设置页并聚焦账号选择器",
+     "target": {
+      "file": "cmd/cnalw/panel_settings.js",
+      "symbol": "acct-shortcut"
+     }
+    }
+   ],
+   "picked": "状态页加导航捷径，跳到设置页并聚焦账号选择器",
+   "evidence": {
+    "kind": "memory",
+    "ref": "log#7",
+    "asserts": [
+     "面板状态页加「切账号」导航捷径"
+    ]
+   },
+   "target": {
+    "file": "cmd/cnalw/panel.html",
+    "symbol": "actions-card"
+   },
+   "cost_if_wrong": "low",
+   "verified": true
+  },
+  {
+   "fork": "切账号后怎么让新账号在两个栈上都生效（2026-11-10 实测：v4 也没换——旧账号流量用完仍在线）",
+   "options": [
+    {
+     "label": "只换凭据 + 如实提示「下次登录生效」",
+     "target": {
+      "file": "internal/app/switch.go",
+      "symbol": "switchReport"
+     }
+    },
+    {
+     "label": "只加「切换即认证」（不释放旧栈，已证明不够）",
+     "target": {
+      "file": "internal/app/switch.go",
+      "symbol": "switchReport"
+     }
+    },
+    {
+     "label": "按栈注销旧 v6 + 认证 + 核对门户归属",
+     "target": {
+      "file": "internal/app/switch.go",
+      "symbol": "switchAccount"
+     }
+    },
+    {
+     "label": "注销两栈（含 v4）+ 认证 + 核对归属",
+     "target": {
+      "file": "internal/app/switch.go",
+      "symbol": "switchAccount"
+     }
+    }
+   ],
+   "picked": "注销两栈（含 v4）+ 认证 + 核对归属",
+   "evidence": {
+    "kind": "repo",
+    "ref": "internal/app/switch_portal_test.go:119",
+    "asserts": [
+     "切换后 v4 应归 new",
+     "旧行为：只注销 v6"
+    ]
+   },
+   "target": {
+    "file": "internal/app/switch.go",
+    "symbol": "switchAccount"
+   },
+   "cost_if_wrong": "high",
+   "verified": true
+  },
+  {
+   "fork": "v6 绑定实况怎么回给调用方（门户原文看不出降级，只能由发起方回报）",
+   "options": [
+    {
+     "label": "布尔 DualSent",
+     "target": {
+      "file": "internal/keeper/login.go",
+      "symbol": "Outcome"
+     }
+    },
+    {
+     "label": "三态 V6Bind（off/sent/degraded）",
+     "target": {
+      "file": "internal/keeper/login.go",
+      "symbol": "V6Bind"
+     }
+    },
+    {
+     "label": "不算返回值，只写日志",
+     "target": {
+      "file": "internal/keeper/login.go",
+      "symbol": "Do"
+     }
+    }
+   ],
+   "picked": "三态 V6Bind（off/sent/degraded）",
+   "evidence": {
+    "kind": "repo",
+    "ref": "internal/keeper/v6bind_test.go:42",
+    "asserts": [
+     "V6Degraded"
+    ]
+   },
+   "target": {
+    "file": "internal/keeper/login.go",
+    "symbol": "Outcome"
+   },
+   "cost_if_wrong": "high",
+   "verified": true
+  },
+  {
+   "fork": "切换成功但认证被门户拒绝（冻结）时 SwitchAccount 返回什么",
+   "options": [
+    {
+     "label": "走成功路径 + 透传门户原文",
+     "target": {
+      "file": "internal/api/api.go",
+      "symbol": "SwitchAccount"
+     }
+    },
+    {
+     "label": "返回 error（面板打「切换失败」）",
+     "target": {
+      "file": "internal/keeper/login.go",
+      "symbol": "Do"
+     }
+    }
+   ],
+   "picked": "走成功路径 + 透传门户原文",
+   "evidence": {
+    "kind": "repo",
+    "ref": "internal/api/api.go:113",
+    "asserts": [
+     "也走成功路径"
+    ]
+   },
+   "target": {
+    "file": "internal/api/api.go",
+    "symbol": "SwitchAccount"
+   },
+   "cost_if_wrong": "high",
+   "verified": true
+  },
+  {
+   "fork": "异校回放语料以什么形式落地",
+   "options": [
+    {
+     "label": "Go 表内联在测试里（来源/逐字/可信度作为结构体字段）",
+     "target": {
+      "file": "internal/keeper/corpus_replay_test.go",
+      "symbol": "corpus"
+     }
+    },
+    {
+     "label": "testdata 文件 + 自写解析器",
+     "target": {
+      "file": "internal/keeper/corpus_replay_test.go",
+      "symbol": "corpus"
+     }
+    },
+    {
+     "label": "只写文档",
+     "target": {
+      "file": "docs/corpus-异校响应语料.md",
+      "symbol": "覆盖度实测"
+     }
+    }
+   ],
+   "picked": "Go 表内联在测试里（来源/逐字/可信度作为结构体字段）",
+   "evidence": {
+    "kind": "repo",
+    "ref": "internal/keeper/corpus_replay_test.go:231",
+    "asserts": [
+     "TestCorpusReplayMarksOverrideNecessaryAndSufficient"
+    ]
+   },
+   "target": {
+    "file": "internal/keeper/corpus_replay_test.go",
+    "symbol": "corpus"
+   },
+   "cost_if_wrong": "low",
+   "verified": true
+  },
+  {
+   "fork": "锐捷 queryString 表达不了这个缺口，本轮怎么处理",
+   "options": [
+    {
+     "label": "只测量并钉住现状（不改生产行为）",
+     "target": {
+      "file": "internal/protocol/form_percent_test.go",
+      "symbol": "TestCorpusRuijieQueryStringFormIsNotExpressible"
+     }
+    },
+    {
+     "label": "顺手放开百分号护栏",
+     "target": {
+      "file": "internal/protocol/form.go",
+      "symbol": "ParseForm"
+     }
+    },
+    {
+     "label": "给模板加引号或 raw 语法",
+     "target": {
+      "file": "internal/protocol/form.go",
+      "symbol": "ParseForm"
+     }
+    }
+   ],
+   "picked": "只测量并钉住现状（不改生产行为）",
+   "evidence": {
+    "kind": "repo",
+    "ref": "internal/protocol/form_percent_test.go:41",
+    "asserts": [
+     "TestCorpusRuijieQueryStringFormIsNotExpressible"
+    ]
+   },
+   "target": {
+    "file": "internal/protocol/form_percent_test.go",
+    "symbol": "TestCorpusRuijieQueryStringFormIsNotExpressible"
+   },
+   "cost_if_wrong": "low",
+   "verified": true
+  },
+  {
+   "fork": "安卓 M0 测量壳放在哪个仓库",
+   "options": [
+    {
+     "label": "独立仓库 ../go-cnal-android",
+     "target": {
+      "file": "docs/android-plan.md",
+      "symbol": "M0 测量壳已落地"
+     }
+    },
+    {
+     "label": "go-cnal 内 android/ 子目录",
+     "target": {
+      "file": "docs/android-plan.md",
+      "symbol": "构建、体积与验收"
+     }
+    }
+   ],
+   "picked": "独立仓库 ../go-cnal-android",
+   "evidence": {
+    "kind": "repo",
+    "ref": "docs/android-plan.md:283",
+    "asserts": [
+     "../go-cnal-android"
+    ]
+   },
+   "target": {
+    "file": "docs/android-plan.md",
+    "symbol": "M0 测量壳已落地"
+   },
+   "cost_if_wrong": "low",
+   "verified": true
+  },
+  {
+   "fork": "安卓上明文 HTTP 的放行范围（锚点与面板都是 http://）",
+   "options": [
+    {
+     "label": "network_security_config 只放行具体域名",
+     "target": {
+      "file": "docs/android-plan.md",
+      "symbol": "风险清单"
+     }
+    },
+    {
+     "label": "全局 usesCleartextTraffic=true",
+     "target": {
+      "file": "docs/android-plan.md",
+      "symbol": "风险清单"
+     }
+    },
+    {
+     "label": "把锚点改成 https",
+     "target": {
+      "file": "docs/android-plan.md",
+      "symbol": "构建、体积与验收"
+     }
+    }
+   ],
+   "picked": "network_security_config 只放行具体域名",
+   "evidence": {
+    "kind": "repo",
+    "ref": "docs/android-plan.md:210",
+    "asserts": [
+     "network-security-config"
+    ]
+   },
+   "target": {
+    "file": "docs/android-plan.md",
+    "symbol": "风险清单"
+   },
+   "cost_if_wrong": "high",
+   "verified": true
+  },
+  {
+   "fork": "守护在 TUN 代理环境下走哪条路（绑物理源 vs 系统栈）",
+   "options": [
+    {
+     "label": "整机只选一条路",
+     "target": {
+      "file": "docs/2026-11-10-双路径自适应设计.md",
+      "symbol": "双路径定义"
+     }
+    },
+    {
+     "label": "逐操作健康探测（auto，绑源优先）",
+     "target": {
+      "file": "docs/2026-11-10-双路径自适应设计.md",
+      "symbol": "逐操作健康探测"
+     }
+    },
+    {
+     "label": "只改 FlClash 配置放行校园流量",
+     "target": {
+      "file": "docs/2026-11-10-以太网启用后守护失效诊断.md",
+      "symbol": "恢复联网的候选"
+     }
+    }
+   ],
+   "picked": "逐操作健康探测（auto，绑源优先）",
+   "evidence": {
+    "kind": "repo",
+    "ref": "docs/2026-11-10-以太网启用后守护失效诊断.md:28",
+    "asserts": [
+     "1.1.1.2"
+    ]
+   },
+   "target": {
+    "file": "docs/2026-11-10-双路径自适应设计.md",
+    "symbol": "逐操作健康探测（核心机制）"
+   },
+   "cost_if_wrong": "high",
+   "verified": true
+  },
+  {
+   "fork": "门户钉点的信任判据用什么（1.1.1.2 实测就是汕头大学门户服务器）",
+   "options": [
+    {
+     "label": "保留公共解析器 IP 黑名单（1.1.1.2 等一律拒钉）",
+     "target": {
+      "file": "internal/netstack/resolver.go",
+      "symbol": "unusablePortalAddr"
+     }
+    },
+    {
+     "label": "撤销黑名单，只按地址形状（环回/保留段/fake-ip）拒绝",
+     "target": {
+      "file": "internal/netstack/resolver.go",
+      "symbol": "unusablePortalAddr"
+     }
+    },
+    {
+     "label": "撤销黑名单 + 证书门户主机名校验（ssl_verify=false 也校验主机名）",
+     "target": {
+      "file": "internal/netstack/client.go",
+      "symbol": "tlsConfig"
+     }
+    }
+   ],
+   "picked": "撤销黑名单 + 证书门户主机名校验（ssl_verify=false 也校验主机名）",
+   "evidence": {
+    "kind": "memory",
+    "ref": "log#1",
+    "asserts": [
+     "证书主机名校验"
+    ]
+   },
+   "target": {
+    "file": "internal/netstack/client.go",
+    "symbol": "tlsConfig"
+   },
+   "cost_if_wrong": "high",
+   "verified": true
+  }
+ ],
+ "note": "早期分叉归档，主台账见 decisions.json；本文件仅供人查，claimrail 不读"
+}

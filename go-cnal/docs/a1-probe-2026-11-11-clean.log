@@ -1,0 +1,40 @@
+=== A1 第 2 轮收表 2026-11-11T12:59:49+0800 ===
+--- 电源（须全 false 才算有效）---
+  AC powered: false
+  USB powered: false
+  Wireless powered: false
+  status: 3
+  level: 86
+  Capacity level: -1
+--- 屏幕/Doze ---
+  mWakefulness=Dozing
+  mState=IDLE mLightState=OVERRIDE
+--- 服务 ---
+    isForeground=true foregroundId=1 types=0x40000000 foregroundNoti=Notification(channel=keeper shortcut=null contentView=null vibrate=null sound=null defaults=0 flags=ONGOING_EVENT|NO_CLEAR|FOREGROUND_SERVICE color=0x00000000 vis=PRIVATE focusType=null)
+    startRequested=true delayedStop=false stopIfKilled=false callStart=true lastStartId=1
+--- probe.log 全文 ---
+2026-11-11T12:27:00.471+08:00 code=204 ms=484 ONLINE
+2026-11-11T12:28:57.541+08:00 code=204 ms=1219 ONLINE
+2026-11-11T12:29:27.541+08:00 code=204 ms=86 ONLINE
+2026-11-11T12:29:57.541+08:00 code=204 ms=193 ONLINE
+2026-11-11T12:30:27.543+08:00 code=204 ms=193 ONLINE
+2026-11-11T12:30:57.543+08:00 code=204 ms=403 ONLINE
+2026-11-11T12:31:27.545+08:00 code=204 ms=200 ONLINE
+2026-11-11T12:31:57.545+08:00 code=204 ms=99 ONLINE
+2026-11-11T12:32:27.545+08:00 code=204 ms=104 ONLINE
+2026-11-11T12:32:57.545+08:00 code=204 ms=104 ONLINE
+2026-11-11T12:33:27.546+08:00 code=204 ms=109 ONLINE
+2026-11-11T12:33:57.547+08:00 code=204 ms=413 ONLINE
+2026-11-11T12:35:55.029+08:00 code=204 ms=2319 ONLINE
+2026-11-11T12:36:25.029+08:00 code=204 ms=392 ONLINE
+2026-11-11T12:36:55.030+08:00 code=204 ms=501 ONLINE
+2026-11-11T12:37:25.030+08:00 code=204 ms=193 ONLINE
+2026-11-11T12:37:55.030+08:00 code=204 ms=201 ONLINE
+2026-11-11T12:38:25.030+08:00 code=204 ms=201 ONLINE
+2026-11-11T12:38:55.031+08:00 code=204 ms=613 ONLINE
+2026-11-11T12:39:25.032+08:00 code=204 ms=104 ONLINE
+2026-11-11T12:39:55.033+08:00 code=204 ms=515 ONLINE
+2026-11-11T12:40:25.034+08:00 code=204 ms=108 ONLINE
+2026-11-11T12:40:55.034+08:00 code=204 ms=109 ONLINE
+--- 行数 ---
+23 files/probe.log

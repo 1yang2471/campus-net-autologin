@@ -1,0 +1,28 @@
+/dist/
+*.test
+cnal.exe
+cnald.exe
+smoke.log
+# 真实校园配置（含校内地址），绝不入库；凭据不在本文件，走环境变量
+/cnal.ini
+# 安全扫描器的工作目录，不是项目内容
+.mimosa/
+cnalw.exe
+*.exe~
+# 更新脚本让位运行中的旧 exe 留下的 .old（构建产物，不是内容）
+*.exe.old
+# claimrail 的个人偏好 log：只在本机，不进 git（forklight 自己的约定）
+/memory/
+# 面板无障碍验收：HTML 由 go test 每次生成，截图是交付物
+docs/screenshots/panel-a11y.html
+# 真机面板截图含校内真实地址（与 cnal.ini 同规矩），绝不入库
+docs/screenshots/panel-live.png
+scripts/__pycache__/
+# 本机插件的工作目录标记（video-agent-kit 落点），不是项目内容
+.video_agent/
+memory/log.jsonl
+memory/denied.json
+.claimrail/shots/
+.claimrail/storage.json
+.claimrail/last-delivery.json
+.claimrail/violations.jsonl

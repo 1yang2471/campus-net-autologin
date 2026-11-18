@@ -1,0 +1,240 @@
+{
+ "schema": 1,
+ "task_class": "api-design",
+ "forks": [
+  {
+   "fork": "A1 通过线怎么重定（凌晨轮证实：稳态不持锁下 MIUI 深Doze 冻结 tick，漏拍0 不可达）",
+   "options": [
+    {
+     "label": "接受息屏存活弱形式：进程活+亮屏自恢复=产品形态，漏拍改「亮屏后1拍内恢复」",
+     "target": {
+      "file": "docs/a1-result-2026-11-13.md",
+      "symbol": "verdict"
+     }
+    },
+    {
+     "label": "稳态低频短持锁（每兜底拍持几秒，深Doze可逐拍，电耗回归A3实测裁决）",
+     "target": {
+      "file": "mobile/wake.go",
+      "symbol": "beatWait"
+     }
+    },
+    {
+     "label": "OEM 设置组合重测（MIUI 省电策略无限制+自启动）",
+     "target": {
+      "file": "docs/a1-result-2026-11-13.md",
+      "symbol": "verdict"
+     }
+    }
+   ],
+   "picked": "接受息屏存活弱形式：进程活+亮屏自恢复=产品形态，漏拍改「亮屏后1拍内恢复」",
+   "evidence": {
+    "kind": "memory",
+    "ref": "log#18",
+    "asserts": [
+     "息屏存活弱形式",
+     "亮屏后 1 拍内恢复"
+    ]
+   },
+   "target": {
+    "file": "docs/a1-result-2026-11-13.md",
+    "symbol": "verdict"
+   },
+   "cost_if_wrong": "high",
+   "verified": true
+  },
+  {
+   "fork": "风控可见化取多大（2026-11-13 黑盒一小时的产品解）",
+   "options": [
+    {
+     "label": "最小集：托盘 tooltip 随 detail 刷新 + 入窗一次气泡（不动图标词汇、不加快照字段）",
+     "target": {
+      "file": "cmd/cnalw/main.go",
+      "symbol": "l2BalloonMessage"
+     }
+    },
+    {
+     "label": "全套：新增「半圆」图标形状 + Snapshot.l2_restricted 字段（面板/安卓各接一遍）",
+     "target": {
+      "file": "DESIGN.md",
+      "symbol": "状态→颜色+形状"
+     }
+    },
+    {
+     "label": "只写日志（现状：托盘只在 state 迁移时刷，受限窗口整段不可见）",
+     "target": {
+      "file": "internal/keeper/daemon_probe.go",
+      "symbol": "onlineDetail"
+     }
+    }
+   ],
+   "picked": "最小集：托盘 tooltip 随 detail 刷新 + 入窗一次气泡（不动图标词汇、不加快照字段）",
+   "evidence": {
+    "kind": "memory",
+    "ref": "log#19",
+    "asserts": [
+     "最小集",
+     "detail已是唯一上浮通道",
+     "面板与安卓FGS已天然携带detail"
+    ]
+   },
+   "target": {
+    "file": "cmd/cnalw/main.go",
+    "symbol": "l2BalloonMessage"
+   },
+   "cost_if_wrong": "low",
+   "verified": true
+  },
+  {
+   "fork": "interval 下限钳制（2026-11-13 登录风暴脚枪收口）",
+   "options": [
+    {
+     "label": "config.go 加载时 <3s 一律 3s；面板保存路径 interval=1 同拒；advancedKeeperKeys lo 1→3，内置下限与面板上限同源；默认值不改，探测频率不动",
+     "target": {
+      "file": "internal/app/config.go",
+      "symbol": "loadDaemonConfig default clamp"
+     }
+    },
+    {
+     "label": "不动 interval 默认值与探测频率（status quo，保留脚枪）",
+     "target": {
+      "file": "internal/app/config.go",
+      "symbol": "status quo"
+     }
+    }
+   ],
+   "picked": "config.go 加载时 <3s 一律 3s；面板保存路径 interval=1 同拒；advancedKeeperKeys lo 1→3，内置下限与面板上限同源；默认值不改，探测频率不动",
+   "evidence": {
+    "kind": "memory",
+    "ref": "log#21",
+    "asserts": [
+     "interval 加载时 <3s 一律 3s",
+     "面板保存路径 interval=1 同拒",
+     "advancedKeeperKeys 可见范围 lo 1→3"
+    ]
+   },
+   "target": {
+    "file": "internal/app/config.go",
+    "symbol": "loadDaemonConfig default clamp"
+   },
+   "cost_if_wrong": "low",
+   "verified": true
+  },
+  {
+   "fork": "心跳停搏自我暴露（2026-11-13 停搏无痕教训）",
+   "options": [
+    {
+     "label": "AnnotateHeartbeatGap 启动空窗自报（最后一拍超30分钟补行），托盘与安卓 Start 接线，tzNow 解析收死",
+     "target": {
+      "file": "internal/app/heartbeat.go",
+      "symbol": "AnnotateHeartbeatGap"
+     }
+    },
+    {
+     "label": "不做：不改心跳日志格式，不加定时探测（status quo，停搏仍无痕）",
+     "target": {
+      "file": "internal/app/heartbeat.go",
+      "symbol": "status quo"
+     }
+    }
+   ],
+   "picked": "AnnotateHeartbeatGap 启动空窗自报（最后一拍超30分钟补行），托盘与安卓 Start 接线，tzNow 解析收死",
+   "evidence": {
+    "kind": "memory",
+    "ref": "log#22",
+    "asserts": [
+     "启动空窗自报 AnnotateHeartbeatGap",
+     "最后一拍超 30 分钟",
+     "tzNow"
+    ]
+   },
+   "target": {
+    "file": "internal/app/heartbeat.go",
+    "symbol": "AnnotateHeartbeatGap"
+   },
+   "cost_if_wrong": "low",
+   "verified": true
+  },
+  {
+   "fork": "安卓面板保存的账号怎么回到 Keystore（只进 Go 内存的话，进程重启后 /accounts 切换会因无密码被拒）",
+   "options": [
+    {
+     "label": "只注入当前账号（现状）",
+     "target": {
+      "file": "mobile/mobile.go",
+      "symbol": "SetCredentials"
+     }
+    },
+    {
+     "label": "CredentialSink 接口回调 Kotlin 落盘",
+     "target": {
+      "file": "mobile/mobile.go",
+      "symbol": "CredentialSink"
+     }
+    },
+    {
+     "label": "Go 侧直接持久化密码",
+     "target": {
+      "file": "mobile/mobile.go",
+      "symbol": "memoryCredentials"
+     }
+    }
+   ],
+   "picked": "CredentialSink 接口回调 Kotlin 落盘",
+   "evidence": {
+    "kind": "memory",
+    "ref": "log#8",
+    "asserts": [
+     "CredentialSink 接口回调 Kotlin Keystore 落盘"
+    ]
+   },
+   "target": {
+    "file": "mobile/mobile.go",
+    "symbol": "CredentialSink"
+   },
+   "cost_if_wrong": "high",
+   "verified": true
+  },
+  {
+   "fork": "A1 第 5 轮的收表时机怎么定（第 4 轮因重新插电作废后）",
+   "options": [
+    {
+     "label": "立即重跑（等待拔线窗口 90 分钟）",
+     "target": {
+      "file": "scripts/a1-collect-m1.sh",
+      "symbol": "WAIT_MIN"
+     }
+    },
+    {
+     "label": "定时凌晨 05:00（用户作息：那时必熄屏）",
+     "target": {
+      "file": "scripts/a1-collect-m1.sh",
+      "symbol": "WAIT_MIN"
+     }
+    },
+    {
+     "label": "不再重跑，维持第 2 轮不过的结论",
+     "target": {
+      "file": "docs/a1-result-2026-11-11.md",
+      "symbol": "a1-result"
+     }
+    }
+   ],
+   "picked": "定时凌晨 05:00（用户作息：那时必熄屏）",
+   "evidence": {
+    "kind": "memory",
+    "ref": "log#9",
+    "asserts": [
+     "A1 第 5 轮收表定在凌晨 05:00"
+    ]
+   },
+   "target": {
+    "file": "scripts/a1-collect-m1.sh",
+    "symbol": "WAIT_MIN"
+   },
+   "cost_if_wrong": "low",
+   "verified": true
+  }
+ ],
+ "note": "二级归档：更早的已验证分叉"
+}
