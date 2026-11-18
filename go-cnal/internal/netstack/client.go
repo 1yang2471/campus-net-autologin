@@ -223,6 +223,14 @@ func (c *Client) PostPinned(rawURL string, form map[string]string, headers map[s
 	return c.do(http.MethodPost, rawURL, form, headers, ipPin)
 }
 
+// GetPinned 同 Get，但实际连 ipPin（host:port）。GET 型登录端点（Dr.COM/Srun
+// 明文族）的参数走 query——与 PostPinned 共用同一条绑源/钉 IP/Host 头实现，
+// 只在 do() 里按 method 决定 form 进 query 还是 body（HTTP 方法只改请求行，
+// urlencoded 编码规则两族相同）。
+func (c *Client) GetPinned(rawURL string, form map[string]string, headers map[string]string, ipPin string) (string, error) {
+	return c.do(http.MethodGet, rawURL, form, headers, ipPin)
+}
+
 func (c *Client) do(method, rawURL string, form map[string]string, headers map[string]string, ipPin string) (string, error) {
 	// CRLF 防线先行：头值带换行直接拒绝，不触网。
 	for k, v := range headers {
@@ -250,9 +258,23 @@ func (c *Client) do(method, rawURL string, form map[string]string, headers map[s
 	defer tr.CloseIdleConnections()
 	cl := &http.Client{Transport: tr, Timeout: c.perTry}
 
+	// GET 型登录（Dr.COM/Srun 明文族）：form 进 query，body 必须为空、
+	// 不设 form Content-Type——与 POST 共用编码规则，只换放置位置。
+	if method == http.MethodGet && len(form) > 0 {
+		u, err := url.Parse(rawURL)
+		if err != nil {
+			return "", err
+		}
+		q := u.Query()
+		for k, v := range form {
+			q.Set(k, v)
+		}
+		u.RawQuery = q.Encode()
+		rawURL = u.String()
+	}
 	var body io.Reader
 	contentType := ""
-	if len(form) > 0 {
+	if method != http.MethodGet && len(form) > 0 {
 		vals := url.Values{}
 		for k, v := range form {
 			vals.Set(k, v)

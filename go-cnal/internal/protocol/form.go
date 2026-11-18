@@ -27,8 +27,11 @@ type formField struct {
 }
 
 // Form 解析后的登录表单模板（不可变；零值 = 默认模板）。
+// Method 是投递指令（POST/GET），不进表单字段——表单原样发门户，方法只决定
+// 参数放 body 还是 query。默认 POST：老模板一字不改。
 type Form struct {
 	fields []formField
+	Method string
 }
 
 // DefaultForm 返回参考校默认模板。字段字面量与 DefaultFormTemplate 同源，
@@ -48,10 +51,22 @@ func ParseForm(s string) (Form, error) {
 	if strings.TrimSpace(s) == "" {
 		return DefaultForm(), nil
 	}
+	method := "POST"
+	body := s
+	// 方法前缀：首段为「GET」或「POST」（全大写）时剥离，不进表单字段。
+	// 其它大写词（DELETE 等）明确拒绝，小写 get 也拒绝——避免方法名分裂。
+	if i := strings.IndexByte(body, '&'); i >= 0 {
+		head := strings.TrimSpace(body[:i])
+		if head == "GET" || head == "POST" {
+			method, body = head, body[i+1:]
+		} else if head == strings.ToUpper(head) && head != "" && !strings.ContainsAny(head, "={}") {
+			return Form{}, fmt.Errorf("不支持的登录方法 %q（仅 GET/POST）", head)
+		}
+	}
 	var fields []formField
 	seen := map[string]bool{}
 	userN, passN := 0, 0
-	for _, seg := range strings.Split(s, "&") {
+	for _, seg := range strings.Split(body, "&") {
 		seg = strings.TrimSpace(seg)
 		if seg == "" {
 			return Form{}, errors.New("登录表单模板含空段")
@@ -95,17 +110,21 @@ func ParseForm(s string) (Form, error) {
 	if passN != 1 {
 		return Form{}, fmt.Errorf("登录表单必须恰好包含一个 {pass}，实际 %d 个", passN)
 	}
-	return Form{fields: fields}, nil
+	return Form{fields: fields, Method: method}, nil
 }
 
 // Template 渲染回模板字符串（面板回显 / 日志诊断用；键序保持解析顺序）。
+// GET 时回显方法前缀（配置往返一致），POST 保持老模板形状不变。
 func (f Form) Template() string {
 	if len(f.fields) == 0 {
 		return DefaultFormTemplate
 	}
-	parts := make([]string, len(f.fields))
-	for i, x := range f.fields {
-		parts[i] = x.key + "=" + x.value
+	parts := make([]string, 0, len(f.fields)+1)
+	if f.Method == "GET" {
+		parts = append(parts, "GET")
+	}
+	for _, x := range f.fields {
+		parts = append(parts, x.key+"="+x.value)
 	}
 	return strings.Join(parts, "&")
 }

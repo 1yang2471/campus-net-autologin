@@ -33,6 +33,21 @@ type Setup struct {
 	API      *api.Server
 	Detected string // 自动探测到的门户基址（"" = 未探测到，用户手填）
 	cfgPath  string
+
+	// 行为确认（指纹快筛失败后的第二路径）。首跑是「先探测、后填凭据」——
+	// 凭据只在面板保存时经 /config 拿到，故确认挂在 SaveConfig 缝上。
+	// NeedConfirm = DetectPortal 指纹未命中（或 server 本就由用户手填未探测）。
+	NeedConfirm bool
+	// ConfirmEvidence 行为确认的证据文案（命中/判负/发包失败），供状态卡 detail
+	// 回显给用户；空 = 未触发或无结论。
+	ConfirmEvidence string
+
+	// pendingUser/pendingPass 本次面板保存提交里携带的凭据（成对时非空）。
+	// 只在内存暂存于本次请求，用于行为确认填表，绝不写 ini。
+	pendingUser, pendingPass string
+	// confirmFunc 行为确认缝：生产接 confirmSetupWithPlumbing（走守护投递路径）；
+	// 测试注入替身，不发真实凭据、不触网。
+	confirmFunc func(daemonConfig, string, string) (bool, string, error)
 }
 
 // NewSetup 初始化首跑配置：确保 ini 存在 → （server 缺失时）自动探测门户并
@@ -54,6 +69,9 @@ func NewSetup(cfgPath string) (*Setup, error) {
 		}
 	}
 	if cfg.Server != "" {
+		// 既有 server（用户手填/上次残留）没经过本次指纹快筛——标记待确认，
+		// 凭据填好后由 SaveConfig 缝跑一次行为确认。
+		s.NeedConfirm = true
 		return s.withAPI(), nil
 	}
 	detected, derr := DetectPortal(DetectOptions{
@@ -68,17 +86,27 @@ func NewSetup(cfgPath string) (*Setup, error) {
 		if err := updateIniFields(vals); err != nil {
 			return nil, err
 		}
+	} else {
+		// 指纹快筛失败（异校页指纹不匹配 / 已登录 / 不在校园网）：标记待确认，
+		// 等用户在面板填好凭据后走行为确认第二路径。
+		s.NeedConfirm = true
 	}
 	return s.withAPI(), nil
 }
 
 // withAPI 装配首跑面板的回路 API：状态卡显示「首次配置」，配置表单可读写。
+// 指纹快筛失败后，凭据在面板保存时到手，SaveConfig 缝跑一次行为确认（第二
+// 路径），结论（含失败证据）经状态卡 detail 回显给用户。
 func (s *Setup) withAPI() *Setup {
 	s.API = api.New()
 	s.API.Snapshot = func() api.Snapshot {
+		detail := "首次配置：填写账号与密码后保存，关闭窗口即启动守护"
+		if s.ConfirmEvidence != "" {
+			detail = s.ConfirmEvidence // 行为确认证据（成功/判负/发包失败）如实回显
+		}
 		return api.Snapshot{
 			State:  "starting",
-			Detail: "首次配置：填写账号与密码后保存，关闭窗口即启动守护",
+			Detail: detail,
 			Label:  "首次配置",
 			Color:  api.Color("starting"),
 		}
@@ -110,12 +138,47 @@ func (s *Setup) withAPI() *Setup {
 			return err
 		}
 		setIniUsername(user) // 凭据已就位：Ready/Compose 的账号指向源同步
+		// 供本次 SaveConfig 缝做行为确认填表（只在内存暂存，不写 ini、不另存）。
+		s.pendingUser, s.pendingPass = user, pass
 		return nil
 	}
 	s.API.SaveConfig = func(values map[string]string) error {
 		// 与运行期面板共用同一条分派（校验先于写入、常用/高级键分组）；
 		// password 已被 api 层剥离，绝不落盘。
-		return saveConfigValues(values)
+		if err := saveConfigValues(values); err != nil {
+			return err
+		}
+		// 指纹快筛失败后的第二路径：凭据已就位，按当前 cfg 发一次探测登录，
+		// 用守护同款判定链判定。成功 → 与指纹成功路径一样继续；失败 → 给证据。
+		// 判负/发包失败都不撤销已保存配置——保持面板「手填后保存」原有失败处理。
+		if s.NeedConfirm {
+			cfg, err := loadDaemonConfig(s.cfgPath)
+			if err != nil {
+				s.ConfirmEvidence = "行为确认读配置失败：" + err.Error()
+				return nil // 配置已落盘，不阻断手填路径
+			}
+			user, pass := s.pendingUser, s.pendingPass
+			if user == "" || pass == "" {
+				// 未在本次提交里填密码（留空=不修改凭据）：从已存凭据读取。
+				user, pass, err = loadCredentials()
+				if err != nil {
+					s.ConfirmEvidence = "行为确认缺凭据：" + err.Error()
+					return nil
+				}
+			}
+			confirm := s.confirmFunc
+			if confirm == nil {
+				confirm = confirmSetupWithPlumbing
+			}
+			proceed, evidence := SetupConfirmDecision(false, func() (bool, string, error) {
+				return confirm(cfg, user, pass)
+			})
+			s.ConfirmEvidence = evidence
+			if proceed {
+				s.NeedConfirm = false // 已确认可用，后续保存不再重复探测
+			}
+		}
+		return nil
 	}
 	return s
 }
