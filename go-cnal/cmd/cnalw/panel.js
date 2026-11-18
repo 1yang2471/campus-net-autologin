@@ -51,6 +51,7 @@ async function refresh() {
     const label = s.label || s.state || "启动中";
     document.getElementById("label").textContent = label;
     document.getElementById("detail").textContent = s.detail || "";
+    renderReadings(s);
     setGlyph(s.color, s.state);
     document.getElementById("v4").textContent = s.v4_src || "未绑定";
     document.getElementById("v6").textContent = s.v6_src || "无 IPv6 源";
@@ -68,6 +69,20 @@ async function refresh() {
     document.getElementById("detail").textContent = "回路 API 不可达（" + e.message + "）";
     setGlyph("", "paused");
   }
+}
+
+// 双读数（2026-11-18）：认证（物理栈）+ 用户路径（系统栈）+ 原因一句话。
+// 字段缺失（旧内核）时整行留空，不编造。
+function renderReadings(s) {
+  const el = document.getElementById("readings");
+  if (!el) return;
+  const auth = { online: "认证在线", offline: "认证离线", unknown: "认证未知" }[s.auth_state] || "";
+  const path = { ok: "用户路径通", broken: "用户路径不通", unknown: "用户路径未知" }[s.user_path] || "";
+  const parts = [];
+  if (auth) parts.push(auth);
+  if (path) parts.push(path);
+  if (s.reason_label) parts.push(s.reason_label);
+  el.textContent = parts.join("｜");
 }
 
 // 今日流量：从 /state 的 flux 快照常驻渲染（内核 10 分钟低频轮询，不额外

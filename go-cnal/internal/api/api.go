@@ -38,6 +38,48 @@ var stateColors = map[string]string{
 	"free_window": "#8b919b",
 }
 
+// reasonLabels/reasonColors 机器原因 → 显示词表（2026-11-18 双读数）：
+// 只覆盖「状态名本身会撒谎」的几种。典型：本地 30 秒闸原来顶着 rejected
+// 的「登录被拒」红字，其实是守护自己暂停，不是门户拒绝。
+var reasonLabels = map[string]string{
+	"local_throttle":     "自动登录暂停",
+	"binding_invalid":    "校园出口不可用",
+	"portal_unreachable": "校园出口不可达",
+}
+
+var reasonColors = map[string]string{
+	"local_throttle":     "#8b919b",
+	"binding_invalid":    "#d1913f",
+	"portal_unreachable": "#d1913f",
+}
+
+// reasonTexts 原因的一句话说明（面板双读数行用；状态名不重复）。
+var reasonTexts = map[string]string{
+	"binding_invalid":      "服务出口绑定失效",
+	"portal_unreachable":   "绑源到不了门户",
+	"local_throttle":       "本地节流中",
+	"portal_rejected":      "门户拒绝登录",
+	"l2_observed":          "出口受限（观察）",
+	"l1_red_session_alive": "锚点异常，会话在线",
+	"session_dead":         "会话不在线",
+	"portal_down":          "认证服务器不可达",
+}
+
+// ReasonLabel 原因对应的显示标签（覆盖状态名；无覆盖时 ok=false）。
+func ReasonLabel(reason string) (string, bool) {
+	v, ok := reasonLabels[reason]
+	return v, ok
+}
+
+// ReasonColor 原因对应的颜色（覆盖状态色；无覆盖时 ok=false）。
+func ReasonColor(reason string) (string, bool) {
+	v, ok := reasonColors[reason]
+	return v, ok
+}
+
+// ReasonText 原因的一句话说明（无则空串；壳层不自造词表）。
+func ReasonText(reason string) string { return reasonTexts[reason] }
+
 // Color 导出状态色（未知状态回退中性灰）——装配层（托盘图标/面板图标）
 // 取色的唯一入口，闭包不得自抄词表（2026-11-07 实证：漏填导致图标空白）。
 func Color(state string) string {
@@ -70,8 +112,15 @@ type Snapshot struct {
 	V6Src string `json:"v6_src,omitempty"`
 	// Route 门户路径读数（面板「门户路径」行）："绑源钉 IP（钉 1.1.1.2:443）"
 	// 或 "系统栈（绑源解析失败…，转系统栈）"。空 = 还没选过路。
-	Route string          `json:"route,omitempty"`
-	Extra map[string]bool `json:"extra,omitempty"`
+	Route string `json:"route,omitempty"`
+	// 双读数（2026-11-18）：认证读数（物理栈）+ 用户路径读数（系统栈）。
+	// 旧客户端读不到这些键（omitempty）；面板/托盘按需显示。
+	AuthState   string          `json:"auth_state,omitempty"`
+	UserPath    string          `json:"user_path,omitempty"`
+	Reason      string          `json:"reason,omitempty"`
+	ReasonLabel string          `json:"reason_label,omitempty"`
+	Action      string          `json:"action,omitempty"`
+	Extra       map[string]bool `json:"extra,omitempty"`
 	// Flux 流量用量只读视图（低频轮询缓存；面板刷 /state 顺带取，不再单独
 	// 打 /flux）。nil = 未接线/还没查过，omitempty 保证旧客户端零影响。
 	Flux *keeper.FluxUsageView `json:"flux,omitempty"`

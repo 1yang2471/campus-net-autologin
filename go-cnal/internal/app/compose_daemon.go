@@ -23,36 +23,17 @@ func newDaemon(cfg daemonConfig, p *plumbing) *keeper.Daemon {
 		d.SetFluxWarnThresholds(cfg.FluxWarnAt, cfg.FluxCriticalAt)
 	}
 	d.ProbeOnline = func() bool {
-		last := l1Outcome{Kind: l1AnchorDown, Detail: "锚点均无响应"}
-		note := func(o l1Outcome) {
-			// bind 失效是最强证据：同一源上后续锚点的超时不得把它覆盖掉。
-			if last.Kind == l1BindInvalid && o.Kind != l1BindInvalid {
-				return
-			}
-			last = o
+		out := probeAnchor(p.probe, cfg)
+		p.setL1(out)
+		return out.OK
+	}
+	// 用户路径读数（系统栈，与浏览器同路）：只展示，不参与判定。
+	d.UserPath = func() keeper.PathReading {
+		if p.systemProbe == nil {
+			return keeper.PathReading{}
 		}
-		for _, ip := range cfg.ProbeIPs {
-			st, body, err := p.probe.GetStatus("http://"+ip+cfg.ProbePath,
-				map[string]string{"Host": cfg.ProbeHost})
-			if err != nil {
-				kind, detail := classifyL1Err(err)
-				note(l1Outcome{Kind: kind, Detail: detail})
-				continue // status 0：被劫持或不可达，试下一锚点
-			}
-			switch st {
-			case 301, 302, 307, 308:
-				note(l1Outcome{Kind: l1Hijacked, Detail: fmt.Sprintf("%s 返回 %d（劫持跳转）", ip, st)})
-				continue // 劫持跳转
-			}
-			if st == 200 && containsAny(body, cfg.HijackMarks) {
-				note(l1Outcome{Kind: l1Hijacked, Detail: fmt.Sprintf("%s 返回 200 型门户劫持页", ip)})
-				continue // 200 型门户劫持页（JS 挑战）不是真实互联网
-			}
-			p.setL1(l1Outcome{OK: true})
-			return true
-		}
-		p.setL1(last)
-		return false
+		out := probeAnchor(p.systemProbe, cfg)
+		return keeper.PathReading{OK: out.OK, Known: true, Detail: out.Detail}
 	}
 	d.PortalAlive = func() bool {
 		// 门户可达是「需要域名解析」的操作：绑源解析成功走绑源钉 IP，

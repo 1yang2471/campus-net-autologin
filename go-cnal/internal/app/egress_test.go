@@ -3,11 +3,14 @@ package app
 import (
 	"errors"
 	"net"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
 
 	"cnal/internal/keeper"
+	"cnal/internal/netstack"
 )
 
 // 出口健康分类（app 层）：把 L1 探针的失败原因和门户选路结果翻成内核能用的
@@ -135,5 +138,48 @@ func TestOnlineV4BoundDoesNotFallBackToSystem(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "绑源解析门户失败") {
 		t.Errorf("错误须说清是绑源解析失败，实际 %q", err)
+	}
+}
+
+// 行为：物理栈/系统栈共用的锚点判定——204 通；302 与 200 型门户页都判
+// 「被劫持/不通」，并带原因。双读数的用户路径读数靠同一套判定，不许两份。
+func TestProbeAnchorClassifies(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/204":
+			w.WriteHeader(http.StatusNoContent)
+		case "/302":
+			http.Redirect(w, r, "https://portal.example/", http.StatusFound)
+		case "/portal":
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte("<title>上网认证系统</title>"))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+
+	c := netstack.NewSystem(time.Second)
+	base := daemonConfig{
+		ProbeIPs:    []string{strings.TrimPrefix(srv.URL, "http://")},
+		ProbePath:   "/204",
+		ProbeHost:   "connect.rom.miui.com",
+		HijackMarks: []string{"上网认证系统"},
+	}
+	if out := probeAnchor(c, base); !out.OK {
+		t.Fatalf("204 应判通，实际 %+v", out)
+	}
+
+	base.ProbePath = "/302"
+	if out := probeAnchor(c, base); out.OK || out.Kind != l1Hijacked {
+		t.Fatalf("302 应判劫持/不通，实际 %+v", out)
+	}
+
+	base.ProbePath = "/portal"
+	if out := probeAnchor(c, base); out.OK || out.Kind != l1Hijacked {
+		t.Fatalf("200 型门户页应判不通，实际 %+v", out)
+	}
+	if out := probeAnchor(nil, base); out.OK || out.Detail == "" {
+		t.Fatalf("未接线应报不通且带原因，实际 %+v", out)
 	}
 }

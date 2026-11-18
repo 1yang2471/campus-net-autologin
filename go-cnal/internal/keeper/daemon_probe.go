@@ -55,6 +55,26 @@ func (d *Daemon) probeSessionOnce(now time.Time) (known, alive bool) {
 	return true, false
 }
 
+// userPathInterval 用户路径读数节流（5s）：系统栈锚点是展示读数，不是心跳；
+// 每拍都打会平白多一份网络请求（TUN 下还要过代理）。
+const userPathInterval = 5 * time.Second
+
+// probeUserPath 采一次用户路径读数（系统栈）。只做展示，不参与判定。
+func (d *Daemon) probeUserPath() {
+	if d.UserPath == nil {
+		return
+	}
+	now := d.Now()
+	if !d.userPathAt.IsZero() && now.Sub(d.userPathAt) < userPathInterval {
+		return
+	}
+	d.userPathAt = now
+	r := d.UserPath()
+	d.mu.Lock()
+	d.userPath = r
+	d.mu.Unlock()
+}
+
 // l1RedSessionInterval L1 红时会话核实的下限（不是心跳）：用户路径一断，
 // 立即问一次门户；之后最多每 10s 一次，避免每拍打 online_check。
 const l1RedSessionInterval = 10 * time.Second
@@ -173,7 +193,7 @@ func (d *Daemon) L2RestrictedOnUI() bool {
 func (d *Daemon) onlineDetail() string {
 	now := d.Now()
 	if d.l2Restricted || now.Before(d.l2WindowUntil) {
-		return "出口受限（DPI 风控窗口，约 15 分钟自愈；认证正常）"
+		return "出口受限（观察：大众站 TLS 被重置；认证正常；勿反复重登）"
 	}
 	return d.v6Detail()
 }

@@ -20,8 +20,8 @@ type SourcePicker struct {
 	probe      func(net.IP) error
 	cur        net.IP
 	fails      map[string]error
-	order      []net.IP        // 最近一次探测的候选顺序（摘要按它排）
-	tried      map[string]bool // 最近一次真正探测过的候选（摘要不得把未探测写成「通」）
+	order      []net.IP             // 最近一次探测的候选顺序（摘要按它排）
+	tried      map[string]bool      // 最近一次真正探测过的候选（摘要不得把未探测写成「通」）
 	downUntil  map[string]time.Time // 刚选中就失效的候选降级窗口
 	now        func() time.Time
 }

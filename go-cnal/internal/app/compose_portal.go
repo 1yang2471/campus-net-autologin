@@ -23,6 +23,7 @@ type plumbing struct {
 	portal       *netstack.Client // 门户页/flux（超时比探测宽）
 	systemPortal *netstack.Client // 系统栈同用途（不绑源，跟 TUN）
 	probe        *netstack.Client // L1 锚点探测
+	systemProbe  *netstack.Client // 系统栈锚点（用户路径读数，只展示）
 	login        *netstack.Client // 登录 POST（超时独立）
 	systemLogin  *netstack.Client // 系统栈登录 POST
 	tlsProbe     *netstack.Client // L2 出口观察
@@ -164,6 +165,7 @@ func newPlumbing(cfg daemonConfig, user, pass string) (*plumbing, error) {
 		systemPortal = systemPortal.InsecureTLS()
 	}
 	probe := netstack.New(v4, cfg.ProbeTimeout)
+	systemProbe := netstack.NewSystem(cfg.ProbeTimeout)
 	// handshakeOnce 对端握手的唯一构造点（登录取值 + v6 四态观察共用，防两份
 	// 漂移）。每次现场构造端点：v6 临时地址轮换后缓存会绑到失效地址；
 	// 无可信 v6 源/未配置对端 → error → 降级纯 v4（absent ≠ fail）。
@@ -194,7 +196,7 @@ func newPlumbing(cfg daemonConfig, user, pass string) (*plumbing, error) {
 	p := &plumbing{
 		portalHost: portalHost, portalPort: portalPort, pt: pt,
 		portal: portal, systemPortal: systemPortal,
-		probe: probe,
+		probe: probe, systemProbe: systemProbe,
 		login: loginClient, systemLogin: systemLogin,
 		netMode: cfg.NetMode, logf: printSource,
 		currentV4: currentV4, currentV6: currentV6, handshakeOnce: handshakeOnce,

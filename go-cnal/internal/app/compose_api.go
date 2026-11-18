@@ -21,6 +21,7 @@ func newAPI(cfg *daemonConfig, p *plumbing, d *keeper.Daemon) *api.Server {
 	a.FetchFlux = func() (map[string]string, error) { return p.fluxQuery(*cfg) }
 	a.Snapshot = func() api.Snapshot {
 		state, detail, v6State, sessionDead, freeMode := d.View()
+		h := d.Health()
 		snap := api.Snapshot{
 			State:   state,
 			Detail:  detail,
@@ -31,8 +32,21 @@ func newAPI(cfg *daemonConfig, p *plumbing, d *keeper.Daemon) *api.Server {
 			V4Src:   srcStr(p.portal.Source()), // 重发现后读当前绑定源，不是启动时的旧值
 			V6Src:   srcStr(p.currentV6()),     // 注入/轮换后的当前 v6 源，不重新枚举网卡
 			Route:   p.routeText(),             // 当前门户路径（绑源钉 IP / 系统栈 + 原因）
+			// 双读数（2026-11-18）：认证与用户路径分开报，不一致时并列显示。
+			AuthState:   h.Auth,
+			UserPath:    h.UserPath,
+			Reason:      h.Reason,
+			ReasonLabel: api.ReasonText(h.Reason),
+			Action:      h.Action,
 			Extra: map[string]bool{"session_dead": sessionDead, "free_mode": freeMode,
 				"auto_reconnect": d.AutoReconnectOn()},
+		}
+		// 原因覆盖状态名：本地节流不再冒充「登录被拒」，绑定失效不再只说「离线」。
+		if lbl, ok := api.ReasonLabel(h.Reason); ok {
+			snap.Label = lbl
+		}
+		if c, ok := api.ReasonColor(h.Reason); ok {
+			snap.Color = c
 		}
 		// 低频轮询缓存的流量视图：只在拿到过读数时带上（omitempty，旧客户端
 		// 读到的 JSON 形状不变）。面板刷 /state 顺带取，不再单独打 /flux。

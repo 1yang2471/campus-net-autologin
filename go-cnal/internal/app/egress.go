@@ -1,9 +1,11 @@
 package app
 
 import (
+	"fmt"
 	"strings"
 
 	"cnal/internal/keeper"
+	"cnal/internal/netstack"
 )
 
 // L1 失败分类：只做证据，不改变红/绿判定。2026-11-18 三连登录实证——
@@ -79,7 +81,7 @@ func (p *plumbing) egressHealth() keeper.EgressHealth {
 
 // classifyL1Err 按错误文本分类 L1 失败。Go 的 net 错误没有跨平台稳定类型，
 // 这里只认实测过的几种文本；认不出就归 anchor_down，绝不猜成 bind 失效
-//（误判成绑定失效会阻止登录，方向是 fail-closed，但要把原文留在 detail）。
+// （误判成绑定失效会阻止登录，方向是 fail-closed，但要把原文留在 detail）。
 func classifyL1Err(err error) (kind, detail string) {
 	if err == nil {
 		return l1AnchorDown, "未知错误"
@@ -100,4 +102,41 @@ func classifyL1Err(err error) (kind, detail string) {
 	default:
 		return l1AnchorDown, err.Error()
 	}
+}
+
+// probeAnchor 对给定客户端跑一遍公网锚点（物理栈/系统栈共用同一套判定）：
+// 204/非劫持页 = 通；302/200 型门户页/连接失败 = 不通，并带原因。
+// 物理栈客户端由调用方负责绑源；系统栈客户端跟浏览器同路。
+func probeAnchor(c *netstack.Client, cfg daemonConfig) l1Outcome {
+	if c == nil {
+		return l1Outcome{Kind: l1AnchorDown, Detail: "探针未接线"}
+	}
+	last := l1Outcome{Kind: l1AnchorDown, Detail: "锚点均无响应"}
+	note := func(o l1Outcome) {
+		// bind 失效是最强证据：同一源上后续锚点的超时不得把它覆盖掉。
+		if last.Kind == l1BindInvalid && o.Kind != l1BindInvalid {
+			return
+		}
+		last = o
+	}
+	for _, ip := range cfg.ProbeIPs {
+		st, body, err := c.GetStatus("http://"+ip+cfg.ProbePath,
+			map[string]string{"Host": cfg.ProbeHost})
+		if err != nil {
+			kind, detail := classifyL1Err(err)
+			note(l1Outcome{Kind: kind, Detail: detail})
+			continue // status 0：被劫持或不可达，试下一锚点
+		}
+		switch st {
+		case 301, 302, 307, 308:
+			note(l1Outcome{Kind: l1Hijacked, Detail: fmt.Sprintf("%s 返回 %d（劫持跳转）", ip, st)})
+			continue // 劫持跳转
+		}
+		if st == 200 && containsAny(body, cfg.HijackMarks) {
+			note(l1Outcome{Kind: l1Hijacked, Detail: fmt.Sprintf("%s 返回 200 型门户劫持页", ip)})
+			continue // 200 型门户劫持页（JS 挑战）不是真实互联网
+		}
+		return l1Outcome{OK: true}
+	}
+	return last
 }

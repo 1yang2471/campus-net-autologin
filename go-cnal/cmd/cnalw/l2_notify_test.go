@@ -9,16 +9,22 @@ import (
 // 用户该被「看见」，而不是醒来发现网坏了不知道为什么）。文案是纯函数可测；
 // 真弹气泡（Shell_NotifyIcon）是平台调用，不进单测——与 flux_notify 同纪律。
 
-// 行为：文案点齐三件事——发生了什么（出口受限）、要不要动手（无需操作）、
-// 什么时候会好（约 15 分钟自愈）。
+// 行为：文案点齐三件事——发生了什么（出口受限）、要不要动手（勿反复重登）、
+// 认证是否正常（认证正常）。不得把未验证的推断写成事实（2026-11-18 修正：
+// 「DPI 风控窗口」「约 15 分钟自愈」是推断，日志只证明大众站 TLS 被重置）。
 func TestL2BalloonMessage(t *testing.T) {
 	title, body := l2BalloonMessage()
 	if title == "" || body == "" {
 		t.Fatal("标题/正文不能空")
 	}
-	for _, w := range []string{"无需操作", "15 分钟"} {
+	for _, w := range []string{"认证正常", "勿反复重登"} {
 		if !strings.Contains(title+body, w) {
 			t.Errorf("文案缺 %q：title=%q body=%q", w, title, body)
+		}
+	}
+	for _, bad := range []string{"15 分钟", "DPI"} {
+		if strings.Contains(title+body, bad) {
+			t.Errorf("不得把未验证的推断写成事实（%q）：%q %q", bad, title, body)
 		}
 	}
 	if strings.Contains(title+body, "!") || strings.Contains(title+body, "！") {

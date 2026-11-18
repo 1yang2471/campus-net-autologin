@@ -90,6 +90,9 @@ type Daemon struct {
 	// ProbeV6 v6 对端栈四态观察（规格 §5.1）：返回 "no_address"/"unobservable"/
 	// "online"/"offline"；nil = 未接线（不观察、不展示）。
 	ProbeV6 func() string
+	// UserPath 用户路径读数（系统栈，与浏览器同路；nil = 未接线，显示未知）。
+	// 只做展示，绝不参与判定——TUN/代理下它反映用户实际体验，不是认证真值。
+	UserPath func() PathReading
 	// OnFluxWarn 流量越阈事件缝（只读、零副作用）：每个阈值档在进程生命周期内
 	// 只回调一次，带档位与用量视图。壳层据此发托盘气泡/安卓通知；内核不弹窗、
 	// 不改自动连、不断网。nil = 不发。
@@ -110,6 +113,8 @@ type Daemon struct {
 	// freeText 免认证时段原文（面板回显用；与 FreeWindows 同锁，保存后回读
 	// 不会拿到启动时的旧值）。
 	freeText string
+	// userPath 用户路径读数（系统栈；mu 护住，Tick 写、面板/托盘读）。
+	userPath PathReading
 
 	// autoReconnect 自动重连开关（Python auto_reconnect 同语义）：false = 只探测
 	// 报状态、不自动登录（手动重连走独立路径不受限）。默认开。并发：Tick 在后台
@@ -142,11 +147,10 @@ type Daemon struct {
 	v6At          time.Time // 上次 v6 观察时刻（60s 节流）
 	l2At          time.Time // 上次 L2 观察时刻（60s 节流）
 	sessAt        time.Time // 上次会话探针时刻（60s 节流）
-	// sessRedAt/sessRedKnown/sessRedAlive L1 红时的会话核实缓存（10s 下限）：
-	// 用户路径一断立即问一次门户，之后节流期内复用结论，避免每拍打 online_check。
-	sessRedAt    time.Time
-	sessRedKnown bool
-	sessRedAlive bool
+	sessRedAt     time.Time // L1 红时会话核实时刻（10s 下限）
+	sessRedKnown  bool      // L1 红时会话真值是否可得
+	sessRedAlive  bool      // L1 红时最近一次会话真值
+	userPathAt    time.Time // 上次用户路径探测时刻（5s 节流）
 	l2Restricted  bool      // 最近一次 L2 观察结果
 	l2WindowUntil time.Time // L2 受限提示保留窗口（恢复后仍提示 2×周期）
 	offlineStreak int       // L1 连续失败拍数（登录去抖；锚点绿即清零）
@@ -205,6 +209,7 @@ func (d *Daemon) Tick() {
 	// 观察层脱离在线分支门槛：v4 掉线期间用户不得瞥见陈旧观察值。
 	d.probeV6()
 	d.probeL2()
+	d.probeUserPath()
 	l1 := d.ProbeOnline()
 	if l1 {
 		d.offlineStreak = 0
@@ -304,7 +309,7 @@ func (d *Daemon) Tick() {
 		return
 	}
 	if d.lastLogin.Add(loginMinInterval).After(now) {
-		d.setState(StateRejected, "登录节流中（防风暴）")
+		d.setState(StateRejected, "自动登录已暂停（本地节流，30 秒后重试）")
 		return
 	}
 	// 重连点：离线拍（锚点红真掉线 / 会话判死假在线落到此）。成功点亮在线

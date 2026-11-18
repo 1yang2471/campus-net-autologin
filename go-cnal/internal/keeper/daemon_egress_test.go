@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 )
 
 // 服务出口门槛（2026-11-18 多源抖动实证）：绑定源在选中后几十秒才真正失效
@@ -189,5 +190,73 @@ func TestHealthyEgressKeepsLoginPath(t *testing.T) {
 	}
 	if calls != 1 {
 		t.Fatalf("健康出口连续 3 拍 L1 红应登录一次，实际 %d 次", calls)
+	}
+}
+
+// 2026-11-18 17:47:39–17:49:41 事故序列回放（日志实证）：
+//   - 17:47:39 选源器把源切到 10.141.53.34；
+//   - 17:48:19 绑源 DNS 超时（出口在选中后 40 秒死掉）；
+//   - 旧逻辑 17:48:34 登录一次（走系统栈），17:49:09、17:49:41 再两次，
+//     17:49:46「连续 3 次登录成功但探测仍失败」熔断 600 秒。
+//
+// 新逻辑：出口失效期间一次都不登录；源恢复且门户说会话在线时也不登录；
+// 只有会话真值说死才登录。诚实边界：日志没有记录会话真值与适配器状态，
+// 这里按已知事实（bind 原文、系统栈成功、门户会话在线）补全夹具。
+func TestReplayIncidentNoLoginWhileEgressInvalid(t *testing.T) {
+	clk := time.Unix(0, 0)
+	calls, reselect := 0, 0
+	bindingInvalid := true
+	sessionAlive := true
+
+	d := NewDaemon("")
+	d.Now = func() time.Time { return clk }
+	d.ProbeOnline = func() bool { return false }
+	d.PortalAlive = func() bool { return true }
+	d.EgressHealth = func() EgressHealth {
+		if bindingInvalid {
+			return EgressHealth{
+				Valid:  false,
+				Reason: EgressBindingInvalid,
+				Detail: "bind: The requested address is not valid in its context.",
+				Source: "10.141.53.34",
+			}
+		}
+		return EgressHealth{Valid: true}
+	}
+	d.SessionAlive = func() (bool, error) { return sessionAlive, nil }
+	d.OnEgressInvalid = func() { reselect++ }
+	d.Login = func() (string, error) { calls++; return "", nil }
+
+	// 17:48:19–17:48:34：绑源失效。旧逻辑在这里登录；新逻辑必须 0 次。
+	for i := 0; i < 5; i++ {
+		d.Tick()
+	}
+	if calls != 0 {
+		t.Fatalf("回放：出口失效期间不得登录，实际 %d 次", calls)
+	}
+	if reselect == 0 {
+		t.Fatal("回放：出口失效应请求重选")
+	}
+	if h := d.Health(); h.Reason != "binding_invalid" || h.Action != ActionReselecting {
+		t.Errorf("回放：应显示 binding_invalid/reselecting，实际 %q/%q", h.Reason, h.Action)
+	}
+
+	// 源恢复（模拟重选成功）：门户说会话在线 → 仍不登录。
+	bindingInvalid = false
+	clk = clk.Add(time.Second)
+	d.Tick()
+	if calls != 0 {
+		t.Fatalf("回放：门户说会话在线时不得登录，实际 %d 次", calls)
+	}
+	if h := d.Health(); h.Auth != AuthOnline {
+		t.Errorf("回放：会话在线时认证读数应为 online，实际 %q", h.Auth)
+	}
+
+	// 会话真值说死 → 允许登录一次（不等 L1 三拍去抖）。
+	sessionAlive = false
+	clk = clk.Add(11 * time.Second) // 越过 L1 红会话核实的 10s 下限
+	d.Tick()
+	if calls != 1 {
+		t.Fatalf("回放：会话真值说死应登录一次，实际 %d 次", calls)
 	}
 }
