@@ -1,0 +1,24 @@
+{"kind":"rejection","key":"portal-trust-criterion","what":"门户钉点的信任判据用证书主机名校验，不用公共解析器 IP 黑名单","why":"用户 2026-11-11 明确选了「完整修：判据 + 选源都改」；实测 1.1.1.2 持汕头大学门户证书 CN=*.stu.edu.cn","at":1}
+{"kind":"rejection","key":"physical-source-selection","what":"物理源按门户可达性探测选，不按路由表选","why":"用户 2026-11-11 选了「完整修：判据 + 选源都改」；插线后路由偏向以太网，认证网关可达性会随时间变","at":2}
+{"kind":"rejection","key":"panel-shows-portal-route","what":"面板要有一行门户路径，让用户看到走的是绑源钉 IP 还是系统栈","why":"用户 2026-11-11 确认「日志/面板说清当前源与实际路径」","at":3}
+{"kind":"rejection","key":"session-liveness-signal","what":"会话存活用会话级 online_check 判，不用账号级 userflux","why":"用户 2026-11-11 确认；实测注销 v4 后 online_check 立刻 online:0，而 userflux 仍回「帐号状态：正常」","at":4}
+{"kind":"rejection","key":"detect-login-page-marks","what":"首跑门户探测的登录页指纹做成 ini 可配 login_page_marks，不把某校字符串焊进代码默认值","why":"用户 2026-11-11 选了「门户探测指纹可配」；实测本校 JS 渲染登录页正文不含 ac_portal/pwdLogin，默认指纹恒失败","at":5}
+{"kind":"rejection","key":"switch-moves-all-v6-sessions","what":"切账号时注销同网卡所有公网 IPv6 会话并按地址逐个重登新账号，不只搬主地址","why":"2026-11-11 实测：Windows 隐私临时地址是独立门户会话，v4 与主 v6 已归新账号而临时地址仍归旧账号（online_check 逐地址读出）","at":6}
+{"kind":"rejection","key":"panel-account-shortcut","what":"面板状态页加「切账号」导航捷径，跳到设置页并聚焦账号选择器，不复制第二份账号列表","why":"产品首屏是状态页，账号切换不能只能在设置里找；列表唯一出处仍是 /accounts","at":7}
+{"kind":"rejection","key":"android-credential-sink","what":"安卓面板保存的账号经 Go 的 CredentialSink 接口回调 Kotlin Keystore 落盘，不只留在 Go 内存","why":"只进内存的话进程重启后 /accounts 切换会因「凭据库无此账号」被拒；Kotlin 启动时全量注入当前+历史账号","at":8}
+{"kind":"rejection","key":"a1-round5-schedule","what":"A1 第 5 轮收表定在凌晨 05:00（用户明确选的作息：那时必熄屏），脚本等待拔线窗口缩到 10 分钟","why":"第 4 轮作废的教训是启动前没复查电源；05:00 定时+短等待窗把「屏灭有保证」和「电源状态如实记录」分开处理：拔线=有效轮，充电=补充观察","at":9}
+{"kind":"rejection","key":"switch-event-state-log","what":"切账号事件补写状态日志文件（AppendEvent，与状态迁移同文件）","why":"2026-11-12 真机踢线实证：p.logf 在安卓只进内存数组，切账号成功但 cnalw.log 无行，事故复盘漏证据","at":10}
+{"kind":"rejection","key":"product-grade-ruler","what":"产品级全验收才算做好；本校单机可用不算","why":"用户 2026-11-12 grill-me 明确选尺子，按此尺子两版均未做好（A1-A5/性能回归/通用性均缺证据）","at":11}
+{"kind":"rejection","key":"generality-honest-scope","what":"通用性诚实收敛：只收尾本校，README 写死边界，不立项异校通用","why":"调研证明密码编码/响应词/op 名是人为约定推不出来，Srun 族须另写 provider；硬做通用会让 A 系列永远收不了尾","at":12}
+{"kind":"rejection","key":"heartbeat-observability","what":"M1 补每拍心跳日志 + rotate；A1 漏拍 0/≤5s 才有测量条件","why":"现状 cnalw.log 只记状态迁移，观测台架本身测不了逐拍漏拍","at":13}
+{"kind":"rejection","key":"event-driven-wake","what":"掉线发现改事件驱动：NetworkCallback + 5min 兜底，AAR 加 Wake 接口","why":"用户指出「突然被踢要无感，心跳肯定得短」；3s 轮询与 A3 ≤3%/h 冲突，30s 与 A1 ≤5s 冲突，事件驱动是同时成立的正解","at":14}
+{"kind":"rejection","key":"a-full-green-only","what":"A1-A5 全清单驱动，全绿才收；EMUI 二机/GUA 环境阻塞不得硬凑","why":"用户 2026-11-12 选择；A2 需 EMUI、A5 需校园 SSID 下发 GUA，非代码可解","at":15}
+{"kind":"rejection","key":"a1-window-split","what":"A1 观测轮拆成两个窗口：凌晨定时跑观测（睡觉自然满足拔电熄屏），白天醒着再补踢线恢复轮","why":"用户问「能否设成半夜五点钟这样的时候进行？那时候睡觉了肯定断电熄屏」；踢线轮选「明天补」","at":16}
+{"kind":"rejection","key":"a1-scheduled-unplug-verification","what":"定时窗口跳过拔电现场确认，改用双点核实：睡前拔电熄屏承诺 + 收表时电池状态（AC powered/level）披露","why":"用户承诺「那时候睡觉了肯定断电熄屏」；凌晨 adb 不可达，无法按复盘 §4 现场复查电源","at":17}
+{"kind":"rejection","key":"a1-pass-criteria-weak-form","what":"A1 通过线改为息屏存活弱形式：进程/服务存活 + 亮屏后 1 拍内恢复；恢复判据按发现路径计（事件 ≤5s / 静默踢线 ≤5min）","why":"用户拍板「接受息屏存活弱形态」；凌晨轮实证深 Doze 冻结 4h28min 后漏拍0 不可达","at":18}
+{"kind":"rejection","key":"l2-visibility-minimal","what":"风控可见化取最小集：托盘tooltip随detail刷新+入窗一次气泡；不加图标形状、不加快照字段（面板与安卓FGS已天然携带detail）","why":"黑盒一小时的产品解是把状态上浮到壳层可见，不是加词汇；detail已是唯一上浮通道，新增字段没人消费","at":19}
+{"kind":"rejection","key":"machine-side-2026-11-13-late","what":"三项机器侧收口：interval 下限钳制≥3s（config.go<3s→3s + advancedKeeperKeys lo 1→3，面板保存同拒）；心跳停搏自我暴露（AnnotateHeartbeatGap，托盘与安卓 Start 接线，tzNow 解析收死）；风控可见化已部署上线（PID 20836 23:47:31，3s 节拍，误报空窗 0）","why":"机器侧先做，需要你配合的（AAR 装机验证、A1 踢线轮、A3 五点 cron）统一后放，按既定“先机器后人”的节奏","at":20}
+{"kind":"rejection","key":"interval-clamp-ge-3s","what":"interval 加载时 <3s 一律 3s（config.go，2026-11-13 登录风暴脚枪收口）；面板保存路径 interval=1 同拒；advancedKeeperKeys 可见范围 lo 1→3，内置下限与面板上限同源；默认值不改（仍 3s），探测频率不动","why":"与 2026-11-13 排查同一教训：interval=1 是登录风暴脚枪，必须硬下限，且面板保存不能绕过","at":21}
+{"kind":"rejection","key":"heartbeat-gap-self-report","what":"启动空窗自报 AnnotateHeartbeatGap：最后一拍超 30 分钟补「心跳空窗」行，托盘 main.go 与安卓 mobile.go Start 分别接线；解析用注入时钟 Location（tzNow），收死 gomobile UTC 时区陷阱","why":"旧进程 21:20:10 停搏 2h 无痕：翻日志才发现，重启后应启动即告","at":22}
+{"kind":"rejection","key":"a1-kick-recovery-verdict","what":"A1 踢线恢复轮判过：用户 10:27:00 门户注销 v4+v6 会话，v4 于 10:28:53 恢复（113 秒 ≤5min 判据）；发现路径=兜底拍+会话判死 1 拍直通（不受 L1 三拍去抖约束），11-13 新装去抖未拖慢踢线恢复；v6 地址未换（SLAAC 同前缀再生），10:34:08 拍观察恢复在线；v6 会话恢复非守护所为（无自动 rebind 路径），门户侧恢复或用户手动（待确认）；息屏态踢线未覆盖如实披露","why":"A1 弱形态判据的收尾轮：恢复判据按发现路径计，实测 113 秒在 ≤5min 内；判死分支设计（绕开去抖）经真机检验成立","at":23}
+{"kind":"rejection","key":"v6-recovery-attribution","what":"v6 会话恢复归因：用户确认踢线后未手动操作、全程旁观等自动恢复；守护无自动 rebind 代码路径（自动重连只登 v4）；唯一解=门户侧按 MAC 自动恢复 v6 会话（v4 重登 10:28:51 后 ≤5min 内，v6_src 地址未换 SLAAC 同前缀再生）。产品含义：会话级踢线场景 v6 无需本地补绑功能；地址轮换场景由 A5 实测裁决","why":"A5 结论口径需要归因确定：三种可能（门户自动/用户手动/守护所为）中前两者被用户陈述与代码事实排除其一，结论影响 v6 功能是否立项","at":24}

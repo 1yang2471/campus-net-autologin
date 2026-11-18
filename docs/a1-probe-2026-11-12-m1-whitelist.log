@@ -1,0 +1,23 @@
+=== A1 M1 白名单轮（拔线时刻起算） ===
+脚本启动: 2026-11-12T05:00:59+0800
+拔线确认: 2026-11-12T05:00:59+0800 (AC powered=)
+adb.exe: device offline
+白名单: 
+--- 屏灭计时 30 分钟 05:01:00 ---
+--- 电源（须全 false 才算有效）---
+adb.exe: device offline
+--- 屏幕/Doze ---
+adb.exe: device offline
+adb.exe: device offline
+--- 白名单 ---
+adb.exe: device offline
+--- 服务/进程 ---
+adb.exe: device offline
+--- 唤醒锁（按策略在线时不持，应为空）---
+adb.exe: device offline
+(无 cnal 唤醒锁)
+--- 内核文件 mtime（应晚于拔线时刻）---
+adb.exe: device offline
+--- 内核回路 /state（屏灭 30 分钟后内核是否可响应）---
+
+--- cnalw.log 尾部 40 行 ---

@@ -1,0 +1,18 @@
+=== A1 第 1 轮（作废）证据 · 12:15:40 起表，12:25 用户拔线后重起 ===
+起表时电源（12:15:39 实测）：
+  AC powered: false / USB powered: false / Wireless powered: false / status: 3 / level: 88
+12:21:51 复查（用户仍在充电线上）：
+  AC powered: true / USB powered: false / Wireless powered: false / status: 2 / level: 87
+用户 12:25 说明：「我手机现在就连的正常充电线，你说不充电那我就拔了」→ 确认此前接着电。
+12:25:34 拔线后复查：
+  AC powered: false / USB powered: false / Wireless powered: false / status: 3 / level: 89
+判定：整轮「不充电」前提不成立，A1 息屏存活数据作废。
+探针日志（12:15:40–12:25:10 共 20 拍，仅作节拍健康检查，不作 A1 结论）：
+2026-11-11T12:15:40.246+08:00 code=204 ms=161 ONLINE
+2026-11-11T12:16:10.247+08:00 code=204 ms=89 ONLINE
+2026-11-11T12:16:40.249+08:00 code=204 ms=80 ONLINE
+2026-11-11T12:17:10.250+08:00 code=204 ms=95 ONLINE
+2026-11-11T12:17:40.250+08:00 code=204 ms=93 ONLINE
+2026-11-11T12:18:10.251+08:00 code=204 ms=96 ONLINE
+（后续 14 拍同为 30.000s 节拍、全 ONLINE，直到 12:25:10，未出现漏拍）
+=== 第 2 轮（干净）于 12:25:xx 重启，见 a1-probe-2026-11-11-clean.log ===

@@ -1,0 +1,33 @@
+#!/usr/bin/env bash
+# 代码提交后自动构建并安装到 %LOCALAPPDATA%\Programs\cnal。
+# 只对内核/壳/构建脚本的改动触发；不重启正在运行的托盘（新版本下次启动生效）。
+# 日志：.git/update.log。更新失败不回滚提交，只打印警告。
+#
+# 安装（新克隆）：Copy-Item scripts\hooks\post-commit .git\hooks\post-commit
+set -u
+
+repo=$(git rev-parse --show-toplevel 2>/dev/null) || exit 0
+cd "$repo" || exit 0
+
+changed=$(git show --pretty=format: --name-only HEAD 2>/dev/null |
+    grep -E '^(cmd/|internal/|mobile/|go\.(mod|sum)$|scripts/.*\.ps1$)' || true)
+[ -z "$changed" ] && exit 0
+
+log="$repo/.git/update.log"
+lock="$repo/.git/update.lock"
+if ! mkdir "$lock" 2>/dev/null; then
+    echo "$(date '+%F %T') 已有更新在运行，跳过" >>"$log"
+    exit 0
+fi
+trap 'rmdir "$lock" 2>/dev/null' EXIT
+
+if {
+    echo "==== $(date '+%F %T') ===="
+    echo "$changed"
+    powershell -NoProfile -ExecutionPolicy Bypass -File "$repo/scripts/update.ps1"
+} >>"$log" 2>&1; then
+    echo "自动更新完成：安装版已是最新（运行中的托盘下次启动生效；-Restart 可立即重启）"
+else
+    echo "WARN 自动更新失败（见 .git/update.log）" >&2
+fi
+exit 0

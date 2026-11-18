@@ -1,0 +1,22 @@
+=== go-cnal 性能基线 2026-11-12 13:21:41 +0800 ===
+
+--- 热路径基准（go test -bench . -benchmem -run '^$'） ---
+goos: windows
+goarch: amd64
+pkg: cnal/internal/dialect
+cpu: AMD Ryzen 9 7940H w/ Radeon 780M Graphics     
+BenchmarkParse-16    	 2407890	       507.6 ns/op	     552 B/op	      12 allocs/op
+PASS
+goos: windows
+goarch: amd64
+pkg: cnal/internal/protocol
+cpu: AMD Ryzen 9 7940H w/ Radeon 780M Graphics     
+BenchmarkInterpretHandshake-16    	 2296683	       510.2 ns/op	     520 B/op	      11 allocs/op
+BenchmarkParseOnlineCheck-16      	 2156804	       612.7 ns/op	     536 B/op	      12 allocs/op
+BenchmarkFormFields-16            	25132204	        48.85 ns/op	       0 B/op	       0 allocs/op
+PASS
+
+--- 构建物体积（存在才记；build.ps1 产出） ---
+7303680 bytes  cnal.exe
+7970304 bytes  cnald.exe
+8908288 bytes  cnalw.exe
