@@ -5,6 +5,17 @@
 掉线后秒级自动补登录（典型 ≤4 秒；最坏 ≈ interval + (锚点数+1)×探测超时 + 登录超时，默认配置约 18 秒），全程无感，彻底告别"填好账号密码还要手动点一次登录"。
 默认不绑定学校（门户地址由向导探测或手填），ac_portal 系异校差异改 `config.ini` 即用，附离线兼容性自检工具。
 
+## 本仓库包含三版实现
+
+| 目录 | 版本 | 平台 | 说明 |
+|---|---|---|---|
+| 根目录 | Python v1.0.14 | Windows | 原始实现，托盘常驻。`python tests_tdd.py` 跑测试 |
+| [`go-cnal/`](go-cnal/) | Go v1.0.0 | Windows | Python 版的 Go 重写，同一内核跑托盘/无头/Android 三种壳。`go test ./...` 跑测试 |
+| [`go-cnal-android/`](go-cnal-android/) | Kotlin M1 | Android | Go 内核的 Android 壳（AAR + 前台服务）。`./gradlew :app:testDebugUnitTest` 跑测试 |
+
+三版共用同一套守护语义，但各自独立发布。Go 版与 Android 版只在本校（ac_portal 族）验证过，异校未实测。
+各目录有自己的 `README.md` 与 `AGENTS.md`，进去看对应说明。
+
 > 🇬 [English quick start](#english)
 
 ---

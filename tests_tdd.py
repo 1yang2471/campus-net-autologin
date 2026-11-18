@@ -216,13 +216,19 @@ def t5_wizard_generates_config():
     """无配置 + 有终端：引导输入账号密码 → 生成 config.ini 并返回含凭据的 cfg。"""
     def run(tmp):
         inputs = iter(["myuser", "mypass"])
-        old_in, old_gp = builtins.input, _km.getpass.getpass
+        old_in, old_gp, old_stdin = builtins.input, _km.getpass.getpass, _km.sys.stdin
         builtins.input = lambda *a: next(inputs)
         _km.getpass.getpass = lambda *a: next(inputs)
+        # ensure_config 用 stdin.isatty() 区分向导/无终端。钩子/CI 的 stdin 是
+        # pipe（isatty=False）会误走 headless 分支。这里显式模拟有终端的向导，
+        # 与下面 t5_wizard_headless_guides 的 _NoTTY 对称；断言不变。
+        class _TTY:
+            def isatty(self): return True
+        _km.sys.stdin = _TTY()
         try:
             cfg = _km.ensure_config(_km.load_config())
         finally:
-            builtins.input, _km.getpass.getpass = old_in, old_gp
+            builtins.input, _km.getpass.getpass, _km.sys.stdin = old_in, old_gp, old_stdin
         assert cfg and cfg["username"] == "myuser"
         assert tmp.is_file(), "应生成 config.ini"
         return cfg
