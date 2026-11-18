@@ -1,0 +1,27 @@
+# Android / Gradle
+.gradle/
+build/
+local.properties
+*.iml
+.idea/
+captures/
+.externalNativeBuild/
+.cxx/
+
+# 工具状态（Mimosa 守卫的会话态，不是项目源码）
+.mimosa/
+.video_agent/
+
+# gomobile bind 的 Java 源码副产物（AAR 本身入库，源码 jar 不必）
+app/libs/*-sources.jar
+memory/log.jsonl
+memory/denied.json
+.claimrail/shots/
+.claimrail/storage.json
+.claimrail/last-delivery.json
+.claimrail/violations.jsonl
+
+# release 签名密钥：只在仓库外 D:/workspace/secrets，这里防御误拷贝
+*.jks
+*.keystore
+secrets/
