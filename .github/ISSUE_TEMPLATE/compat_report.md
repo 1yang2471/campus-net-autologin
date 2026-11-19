@@ -11,6 +11,10 @@ labels: compatibility
 - 学校（可选）：
 - 门户地址（可脱敏）：
 - Windows 版本：
+- 网卡形态（WiFi / 有线 / 双网卡同时在线）：
+- DHCP 租约时长（`ipconfig /all` 里 Lease Expires − Lease Obtained；短租约≈频繁换 IP）：
+- Windows 联网指示（同时双网卡时是否误报「无 Internet」）：是 / 否 / 不适用
+- 本机是否装过代理/加速器（Clash 等，仅写有没有）：
 
 ## 1. 协议指纹（先判族，不联网）
 

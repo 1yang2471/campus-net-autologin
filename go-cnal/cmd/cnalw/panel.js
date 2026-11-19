@@ -51,9 +51,11 @@ async function refresh() {
     const label = s.label || s.state || "启动中";
     document.getElementById("label").textContent = label;
     document.getElementById("detail").textContent = s.detail || "";
+    renderReadings(s);
     setGlyph(s.color, s.state);
     document.getElementById("v4").textContent = s.v4_src || "未绑定";
     document.getElementById("v6").textContent = s.v6_src || "无 IPv6 源";
+    renderNics(s.unauth_sources);
     document.getElementById("route").textContent = s.route || "尚未选路";
     document.getElementById("sess").textContent = s.extra && s.extra.session_dead ? "已判死（重连中）" : "正常";
     document.getElementById("free").textContent = s.extra && s.extra.free_mode ? "已进入（自动检测）" : "未触发";
@@ -68,6 +70,32 @@ async function refresh() {
     document.getElementById("detail").textContent = "回路 API 不可达（" + e.message + "）";
     setGlyph("", "paused");
   }
+}
+
+// 旁路网卡（2026-11-19）：已连接但未认证的其他物理源。Windows 双网卡下
+// 联网指示取最差结果——把事实说清楚，用户才知道黄叹号不等于断网。
+// 字段缺失（旧内核）时显示占位，不编造。
+function renderNics(list) {
+  const el = document.getElementById("nics");
+  if (!el) return;
+  const ips = Array.isArray(list) ? list.filter(x => typeof x === "string" && x) : [];
+  el.textContent = ips.length
+    ? ips.join("、") + "（已连接未认证；Windows 可能误报无 Internet）"
+    : "—";
+}
+
+// 双读数（2026-11-18）：认证（物理栈）+ 用户路径（系统栈）+ 原因一句话。
+// 字段缺失（旧内核）时整行留空，不编造。
+function renderReadings(s) {
+  const el = document.getElementById("readings");
+  if (!el) return;
+  const auth = { online: "认证在线", offline: "认证离线", unknown: "认证未知" }[s.auth_state] || "";
+  const path = { ok: "用户路径通", broken: "用户路径不通", unknown: "用户路径未知" }[s.user_path] || "";
+  const parts = [];
+  if (auth) parts.push(auth);
+  if (path) parts.push(path);
+  if (s.reason_label) parts.push(s.reason_label);
+  el.textContent = parts.join("｜");
 }
 
 // 今日流量：从 /state 的 flux 快照常驻渲染（内核 10 分钟低频轮询，不额外
@@ -133,7 +161,12 @@ document.getElementById("flux-btn").addEventListener("click", async (ev) => {
   el.textContent = "查询中…";
   try {
     const r = await fetch("/flux", { headers: H });
-    const data = await r.json().catch(() => null);
+    // body 只读一次：先取全文再解析 JSON。旧写法 r.json() 消费 body 后，
+    // 错误分支再 r.text() 会抛 body stream already read，把真实错误盖掉
+    // （真机实证 2026-11-19）。
+    const raw = await r.text();
+    let data = null;
+    try { data = JSON.parse(raw) } catch {}
     if (r.ok && data) {
       // 键名是校事实（参考校：当天流量/日流量额；他校可能：已用流量/剩余流量）。
       // 常见键按优先级展示；全都没有就展示其它字段——绝不把「用户名称」当流量。
@@ -147,7 +180,7 @@ document.getElementById("flux-btn").addEventListener("click", async (ev) => {
       el.title = "查询于 " + new Date().toLocaleTimeString("zh-CN", { hour12: false }) + "\n" +
         Object.entries(data).map(([k, v]) => k + "：" + v).join("\n");
     } else {
-      el.textContent = "查询失败：" + (data && data["错误"] ? data["错误"] : (await r.text() || r.status));
+      el.textContent = "查询失败：" + (data && data["错误"] ? data["错误"] : (raw || r.status));
       el.title = "";
     }
   } catch (e) {

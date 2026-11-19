@@ -2,10 +2,12 @@ package app
 
 import (
 	"net"
+	"strings"
 	"testing"
 	"time"
 
 	"cnal/internal/keeper"
+	"cnal/internal/netstack"
 )
 
 // 装配完整性：Compose 拆文件后最容易犯的错是「某一缝忘了接」——那种错
@@ -37,10 +39,16 @@ func TestNewDaemonWiresAllSeams(t *testing.T) {
 	if d.Login == nil {
 		t.Error("Login 缝未接")
 	}
+	if d.EgressHealth == nil {
+		t.Error("EgressHealth 缝未接（出口门槛会静默失效）")
+	}
 	// rd=nil（bind_ip 手工钉源）时不得接 OnPortalDown——automatic 重发现
 	// 不得抢用户显式钉源的方向盘。
 	if d.OnPortalDown != nil {
 		t.Error("rd=nil（手工钉源）时不应接 OnPortalDown")
+	}
+	if d.OnEgressInvalid != nil {
+		t.Error("rd=nil（手工钉源）时不应接 OnEgressInvalid")
 	}
 }
 
@@ -54,6 +62,9 @@ func TestNewDaemonWiresOnPortalDownWhenRediscoverEnabled(t *testing.T) {
 	d := newDaemon(cfg, pl)
 	if d.OnPortalDown == nil {
 		t.Error("启用重发现时应接 OnPortalDown")
+	}
+	if d.OnEgressInvalid == nil {
+		t.Error("启用重发现时应接 OnEgressInvalid（绑定失效要立即重选）")
 	}
 }
 
@@ -117,5 +128,35 @@ func TestNewAPIGetConfigKeys(t *testing.T) {
 	}
 	if view["server"] != "https://portal.example" {
 		t.Errorf("server 应回显配置值，实际 %q", view["server"])
+	}
+}
+
+// 行为：绑定失效回调必须先降级当前源再重选——否则 Refresh 会再次探到刚死的
+// 候选（今天 17:43/17:46/17:56 热点被反复选中的形态）。
+func TestOnEgressInvalidMarksPickerDown(t *testing.T) {
+	a := net.ParseIP("10.141.53.34")
+	pick := netstack.NewSourcePicker(
+		func() []net.IP { return []net.IP{a} },
+		func(net.IP) error { return nil })
+	if _, err := pick.Refresh(); err != nil {
+		t.Fatalf("前置：首次应选中 %s: %v", a, err)
+	}
+	cfg := defaultAdvancedConfig()
+	pl := &plumbing{
+		action:    &keeper.LoginAction{},
+		rl:        keeper.NewRateLimit(8, time.Hour, 15*time.Minute, time.Now),
+		picker:    pick,
+		currentV4: func() net.IP { return a },
+		rd: newRediscoverer(time.Minute, a,
+			func() net.IP { ip, _ := pick.Refresh(); return ip },
+			func(net.IP) {}),
+	}
+	d := newDaemon(cfg, pl)
+	if d.OnEgressInvalid == nil {
+		t.Fatal("启用重发现时应接 OnEgressInvalid")
+	}
+	d.OnEgressInvalid()
+	if !strings.Contains(pick.Summary(), "降级中") {
+		t.Fatalf("绑定失效应把当前源标降级，摘要：%q", pick.Summary())
 	}
 }

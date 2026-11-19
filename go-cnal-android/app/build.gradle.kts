@@ -70,9 +70,11 @@ tasks.matching { it.name.startsWith("assembleRelease") || it.name.startsWith("li
 
 dependencies {
     implementation("androidx.core:core-ktx:1.13.1")
-    // M1：gomobile bind 产出的 AAR（Go 内核）。由 go-cnal 侧
-    // `gomobile bind -target=android/arm64 -androidapi 29 -javapkg dev.cnal
-    //  -o app/libs/mobile.aar ./mobile` 生成；v1 只出 arm64（android-plan §7）。
+    // M1：gomobile bind 产出的 AAR（Go 内核）。由 go-cnal 侧（GOPROXY 默认
+    //  proxy.golang.org 本网络不通，须指国内镜像）：
+    // `GOPROXY=https://goproxy.cn,direct gomobile bind -target=android/arm64
+    //  -androidapi 29 -javapkg dev.cnal -o ../go-cnal-android/app/libs/mobile.aar
+    //  ./mobile` 生成；v1 只出 arm64（android-plan §7）。
     implementation(files("libs/mobile.aar"))
     testImplementation("junit:junit:4.13.2")
 }

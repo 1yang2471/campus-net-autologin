@@ -141,6 +141,12 @@ func (c *Client) GetStatusHeaders(rawURL string, headers map[string]string) (int
 	return c.doStatusFull(http.MethodGet, rawURL, headers, "")
 }
 
+// GetStatusPinnedHeaders 同 GetStatusHeaders，但实际连 ipPin（多网卡认证态
+// 观察用：绑旁路源解析出真实 IP 后钉 IP 直连，TUN 下域名不可信）。
+func (c *Client) GetStatusPinnedHeaders(rawURL string, headers map[string]string, ipPin string) (int, http.Header, string, error) {
+	return c.doStatusFull(http.MethodGet, rawURL, headers, ipPin)
+}
+
 func (c *Client) doStatusPinned(method, rawURL string, headers map[string]string, ipPin string) (int, string, error) {
 	st, _, body, err := c.doStatusFull(method, rawURL, headers, ipPin)
 	return st, body, err

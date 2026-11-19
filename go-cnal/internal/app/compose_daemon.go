@@ -23,22 +23,23 @@ func newDaemon(cfg daemonConfig, p *plumbing) *keeper.Daemon {
 		d.SetFluxWarnThresholds(cfg.FluxWarnAt, cfg.FluxCriticalAt)
 	}
 	d.ProbeOnline = func() bool {
-		for _, ip := range cfg.ProbeIPs {
-			st, body, err := p.probe.GetStatus("http://"+ip+cfg.ProbePath,
-				map[string]string{"Host": cfg.ProbeHost})
-			if err != nil {
-				continue // status 0：被劫持或不可达，试下一锚点
-			}
-			switch st {
-			case 301, 302, 307, 308:
-				continue // 劫持跳转
-			}
-			if st == 200 && containsAny(body, cfg.HijackMarks) {
-				continue // 200 型门户劫持页（JS 挑战）不是真实互联网
-			}
-			return true
+		out := probeAnchor(p.probe, cfg)
+		p.setL1(out)
+		return out.OK
+	}
+	// 用户路径读数（系统栈，与浏览器同路）：只展示，不参与判定。
+	d.UserPath = func() keeper.PathReading {
+		if p.systemProbe == nil {
+			return keeper.PathReading{}
 		}
-		return false
+		out := probeAnchor(p.systemProbe, cfg)
+		return keeper.PathReading{OK: out.OK, Known: true, Detail: out.Detail}
+	}
+	// 旁路网卡观察（2026-11-19）：非绑定物理源的认证态只上报面板，解释
+	// Windows「无 Internet」黄叹号误报。安卓注入源模式由 Kotlin 管网络，跳过；
+	// 探测零凭据、60s 节流在内核，绝不在旁路卡上登录。
+	if _, _, injected := physicalSources(); !injected && p.currentV4 != nil {
+		d.ProbeSiblingAuth = func() []string { return p.siblingUnauth(cfg) }
 	}
 	d.PortalAlive = func() bool {
 		// 门户可达是「需要域名解析」的操作：绑源解析成功走绑源钉 IP，
@@ -51,9 +52,22 @@ func newDaemon(cfg daemonConfig, p *plumbing) *keeper.Daemon {
 		_, err := r.client.Get(cfg.Server+cfg.LoginPage, nil, r.pin)
 		return err == nil
 	}
+	// 出口健康门槛（2026-11-18 三连登录实证）：本地绑定失效/绑源到不了
+	// 门户时，内核不发凭据，先报状态让组合根重选。
+	d.EgressHealth = p.egressHealth
 	// 物理源重发现只在 bind_ip 未钉源时装配（rd 为 nil 即手工钉源）。
 	if p.rd != nil {
 		d.OnPortalDown = func() { p.rd.tick(time.Now()) }
+		// 绑定失效：先把当前源标降级（避免下一轮又选回刚死的候选），再立即
+		// 重选（rd.force 自带 5s 下限）。死源多留一秒都在放大「探测/动作
+		// 两套网络观」的窗口。
+		d.OnEgressInvalid = func() {
+			now := time.Now()
+			if p.picker != nil {
+				p.picker.Down(p.currentV4(), now)
+			}
+			p.rd.force(now)
+		}
 	}
 	// v6 四态观察（规格 §5.1）：S0 本机无 v6 / S1 不可观测（无入口或握手无响应）
 	// / S2a 在线 / S2b 未在线。绝不把 S1 塌缩成"不可达"（#8 误报）。
@@ -89,9 +103,11 @@ func newDaemon(cfg daemonConfig, p *plumbing) *keeper.Daemon {
 	// 会话级存活探针（2026-11-11 实证：userflux 是账号级读数，会话释放后仍有
 	// 数据 → 只靠 flux 判不出「会话没了」，守护不会自动重登）。
 	// 走与登录同一个门户入口的 online_check（按请求源地址认栈、构造上无凭据），
-	// 选路与登录一致（绑源优先、失败转系统栈）。
+	// 选路只走绑源（服务出口同路）；绑源不可达返回未知，不转系统栈。
 	d.SessionAlive = func() (bool, error) {
-		st, err := p.onlineV4(cfg)
+		// 只走绑源：自动认证/判死的会话真值必须与服务出口同路。回退系统栈
+		// 会造成「A 出口报状态、B 出口问会话」，正是 2026-11-18 17:48 的形态。
+		st, err := p.onlineV4Bound(cfg)
 		if err != nil {
 			return false, err // 未知：不推进判死（门户不可达属离线分支职权）
 		}
@@ -99,6 +115,18 @@ func newDaemon(cfg daemonConfig, p *plumbing) *keeper.Daemon {
 	}
 	// 登录缝：速率闸门先行（闸门不开不触网），成功记账。
 	d.Login = func() (string, error) {
+		// 二次防线：内核门槛放行后出口仍可能在这几微秒内失效——绝不把凭据
+		// 交给一条正在报「不可用」的出口（2026-11-18 不变量）。
+		if eg := p.egressHealth(); !eg.Valid {
+			detail := eg.Detail
+			if detail == "" {
+				detail = "出口不可用"
+			}
+			if eg.Reason == keeper.EgressPortalUnreachable {
+				return "", fmt.Errorf("%w：%s", keeper.ErrEgressPortalUnreachable, detail)
+			}
+			return "", fmt.Errorf("%w：%s", keeper.ErrEgressInvalid, detail)
+		}
 		if !p.rl.AllowAutoLogin() {
 			return "", fmt.Errorf("%w：滚动 1 小时自动登录已达上限，闸门关闭 15 分钟", keeper.ErrRateCapped)
 		}

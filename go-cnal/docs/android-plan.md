@@ -75,9 +75,13 @@ func FluxJSON() (string, error)
 func LogsJSON() string
 func SetCredentials(user, pass string) error
 func SwitchAccount(user string) error
+func DetectPortal(configPath string) (string, error) // 首跑门户探测（2026-11-19）
 ```
 
-Kotlin 只依赖这 9 个方法；内部仍走 `app.Compose` 与同一套 API 契约。
+Kotlin 只依赖这些方法；内部仍走 `app.Compose` 与同一套 API 契约。
+`DetectPortal` 要求先 `SetPhysicalSources` 注入已绑定 Wi-Fi 的物理 v4（物理栈
+纪律：安卓上自动发现源可能选到 rmnet/VPN），由首屏「自动探测门户」按钮在
+后台线程调用，探测成功回填并保存 server。
 `Start` 内部起与 `cmd/cnalw` 相同的 tick goroutine（`Daemon.Tick()` +
 `cfg.Interval` 睡眠）；前台服务只负责让进程活着，不参与状态机。
 
@@ -116,7 +120,8 @@ type CredentialSource interface {
 
 `Compose` 现在直接调 `netstack.DiscoverSource` / `PhysicalSourceV6`
 （`app.go:52-53`）。安卓由 Kotlin 从 `LinkProperties` 取 Wi-Fi 的 v4/v6 地址
-与接口名传进来：
+与接口名传进来（**2026-11-19 起同一份 `LinkProperties` 的 `dnsServers` 也用来
+自动补全 `campus_dns`**：新装机没有生效值时按 DHCP DNS 填入，已有值不覆盖）：
 
 - v4：`wlan0` 的 IPv4；v6：`wlan0` 的全局 GUA（没有就 nil）。
 - 为什么不让 Go 自己枚举：安卓上 `rmnet`（蜂窝）也可能有全局 v6，

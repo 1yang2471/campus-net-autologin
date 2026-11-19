@@ -6,6 +6,7 @@ import (
 	"net"
 	"strings"
 	"sync"
+	"time"
 )
 
 // SourcePicker 按**门户可达性**挑选物理源（2026-11-11 设计 §3）。
@@ -19,7 +20,10 @@ type SourcePicker struct {
 	probe      func(net.IP) error
 	cur        net.IP
 	fails      map[string]error
-	order      []net.IP // 最近一次探测的候选顺序（摘要按它排）
+	order      []net.IP             // 最近一次探测的候选顺序（摘要按它排）
+	tried      map[string]bool      // 最近一次真正探测过的候选（摘要不得把未探测写成「通」）
+	downUntil  map[string]time.Time // 刚选中就失效的候选降级窗口
+	now        func() time.Time
 }
 
 // NewSourcePicker 造选源器。candidates 每次调用重新枚举（网卡会变），
@@ -29,6 +33,9 @@ func NewSourcePicker(candidates func() []net.IP, probe func(net.IP) error) *Sour
 		candidates: candidates,
 		probe:      probe,
 		fails:      map[string]error{},
+		tried:      map[string]bool{},
+		downUntil:  map[string]time.Time{},
+		now:        time.Now,
 	}
 }
 
@@ -51,21 +58,64 @@ func (p *SourcePicker) Refresh() (net.IP, error) {
 	if len(cands) == 0 {
 		return p.cur, errors.New("没有可用物理 v4 候选源")
 	}
+	now := time.Now()
+	if p.now != nil {
+		now = p.now()
+	}
+	// 过期降级清理：候选回来时重新参与，不让 map 无限长。
+	for k, until := range p.downUntil {
+		if !now.Before(until) {
+			delete(p.downUntil, k)
+		}
+	}
 	fails := map[string]error{}
+	tried := map[string]bool{}
+	active := make([]net.IP, 0, len(cands))
 	for _, c := range cands {
+		if until, ok := p.downUntil[c.String()]; ok && now.Before(until) {
+			fails[c.String()] = fmt.Errorf("降级中（%s 后重试）", until.Sub(now).Round(time.Second))
+			continue
+		}
+		active = append(active, c)
+	}
+	p.order = cands
+	p.tried = tried
+	if len(active) == 0 {
+		p.fails = fails
+		return p.cur, fmt.Errorf("候选源 %d 个均处于降级期: %s",
+			len(cands), formatFails(cands, fails))
+	}
+	for _, c := range active {
+		tried[c.String()] = true
 		err := p.probe(c)
 		if err == nil {
 			p.cur = c
 			p.fails = fails
-			p.order = cands
 			return c, nil
 		}
 		fails[c.String()] = err
 	}
 	p.fails = fails
-	p.order = cands
 	return p.cur, fmt.Errorf("候选源 %d 个均不可达门户: %s",
 		len(cands), formatFails(cands, fails))
+}
+
+// candidateDownFor 刚选中就失效的候选降级时长（2026-11-18 实证：17:47:39
+// 选中 10.141.53.34，40 秒后绑源 DNS 超时；17:56:13 选中热点 10.158.52.162，
+// 27 秒后 bind 失效）。60 秒跨过「用户正在切网」的抖动窗口，又不会把真正
+// 恢复的网卡锁太久。
+const candidateDownFor = 60 * time.Second
+
+// Down 标记候选源降级（刚选中就失效/绑定失败）：Refresh 在窗口内跳过它，
+// 避免反复选回刚死的候选。只影响「下一次选谁」，不改当前绑定——当前绑定
+// 由组合根的 apply 负责。
+func (p *SourcePicker) Down(ip net.IP, now time.Time) {
+	if ip == nil {
+		return
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.downUntil[ip.String()] = now.Add(candidateDownFor)
 }
 
 // Invalidate 作废当前选中源（该源被门户操作判失败）——下次 Refresh 重新探测。
@@ -88,7 +138,9 @@ func (p *SourcePicker) Failures() map[string]error {
 
 // Summary 最近一次探测的一句话总结（按候选顺序）：
 // "10.141.53.34 不通（i/o timeout）；172.29.153.208 通"。
-// 没探测过则返回空串。
+// 没探测过则返回空串。前序候选已通时后续候选没有被探测，必须写「未探测」——
+// 写成「通」是诊断假话（2026-11-18 日志：只有首个候选探过，摘要却把两个都
+// 写成「通」）。
 func (p *SourcePicker) Summary() string {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -97,8 +149,13 @@ func (p *SourcePicker) Summary() string {
 	}
 	parts := make([]string, 0, len(p.order))
 	for _, c := range p.order {
-		if err := p.fails[c.String()]; err != nil {
+		key := c.String()
+		if err := p.fails[key]; err != nil {
 			parts = append(parts, fmt.Sprintf("%s 不通（%s）", c, err))
+			continue
+		}
+		if !p.tried[key] {
+			parts = append(parts, fmt.Sprintf("%s 未探测", c))
 			continue
 		}
 		parts = append(parts, fmt.Sprintf("%s 通", c))

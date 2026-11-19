@@ -23,6 +23,7 @@ type plumbing struct {
 	portal       *netstack.Client // 门户页/flux（超时比探测宽）
 	systemPortal *netstack.Client // 系统栈同用途（不绑源，跟 TUN）
 	probe        *netstack.Client // L1 锚点探测
+	systemProbe  *netstack.Client // 系统栈锚点（用户路径读数，只展示）
 	login        *netstack.Client // 登录 POST（超时独立）
 	systemLogin  *netstack.Client // 系统栈登录 POST
 	tlsProbe     *netstack.Client // L2 出口观察
@@ -36,6 +37,10 @@ type plumbing struct {
 	routeMu   sync.Mutex
 	lastRoute string
 	lastWhy   string
+	// l1Mu/l1 最近一拍 L1 探测结果（含失败分类）：出口健康门槛的证据源。
+	// Tick goroutine 写、Tick goroutine 读；手动重连只读 egressHealth，也走锁。
+	l1Mu sync.Mutex
+	l1   l1Outcome
 	// handshakeOnce 对端握手唯一构造点（登录 Do 与 v6 四态观察共用）。
 	// keeper 侧 peerValue 不导出，守护缝从这里取。
 	handshakeOnce func() (string, error)
@@ -160,6 +165,7 @@ func newPlumbing(cfg daemonConfig, user, pass string) (*plumbing, error) {
 		systemPortal = systemPortal.InsecureTLS()
 	}
 	probe := netstack.New(v4, cfg.ProbeTimeout)
+	systemProbe := netstack.NewSystem(cfg.ProbeTimeout)
 	// handshakeOnce 对端握手的唯一构造点（登录取值 + v6 四态观察共用，防两份
 	// 漂移）。每次现场构造端点：v6 临时地址轮换后缓存会绑到失效地址；
 	// 无可信 v6 源/未配置对端 → error → 降级纯 v4（absent ≠ fail）。
@@ -190,7 +196,7 @@ func newPlumbing(cfg daemonConfig, user, pass string) (*plumbing, error) {
 	p := &plumbing{
 		portalHost: portalHost, portalPort: portalPort, pt: pt,
 		portal: portal, systemPortal: systemPortal,
-		probe: probe,
+		probe: probe, systemProbe: systemProbe,
 		login: loginClient, systemLogin: systemLogin,
 		netMode: cfg.NetMode, logf: printSource,
 		currentV4: currentV4, currentV6: currentV6, handshakeOnce: handshakeOnce,
@@ -295,9 +301,33 @@ func (p *plumbing) peerClient(cfg daemonConfig) *protocol.Peer {
 		maxDuration(cfg.ProbeTimeout, 5*time.Second))
 }
 
+// onlineV4Bound 只走绑源的 online_check：自动会话判死的真值必须与服务出口
+// 同路。绑源解析门户失败即返回错误（未知），不转系统栈——系统栈只做用户
+// 路径读数，不参与认证判定（2026-11-18：「A 报状态、B 问会话」即事故形态）。
+func (p *plumbing) onlineV4Bound(cfg daemonConfig) (protocol.OnlineState, error) {
+	ip, err := p.pt.lookup()
+	if ip == nil {
+		return protocol.OnlineState{}, fmt.Errorf("绑源解析门户失败: %w", err)
+	}
+	pin := net.JoinHostPort(ip.String(), p.portalPort)
+	raw, err := p.login.PostPinned(cfg.Server+cfg.LoginPath,
+		protocol.OpForm(protocol.OpOnlineCheck, ""),
+		map[string]string{
+			"Content-Type": "application/x-www-form-urlencoded",
+			"User-Agent":   cfg.UserAgent,
+		}, pin)
+	if err != nil {
+		return protocol.OnlineState{}, err
+	}
+	return protocol.ParseOnlineCheck(raw)
+}
+
 // onlineV4 只读问「v4 栈挂在谁名下」。走门户登录端点的选路（绑源优先、
 // 失败转系统栈），不带凭据。存在的理由：登录只搬得动 v4，v6 的归属得
 // 单独问（见 protocol.OnlineState）。
+//
+// 注意：这是**手动操作**（切账号/归属核对）用的自动选路；自动守护的会话
+// 判死走 onlineV4Bound，不得回退系统栈。
 func (p *plumbing) onlineV4(cfg daemonConfig) (protocol.OnlineState, error) {
 	r := p.routeLogin()
 	if r.client == nil {

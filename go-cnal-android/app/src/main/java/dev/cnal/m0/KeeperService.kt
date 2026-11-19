@@ -82,8 +82,13 @@ class KeeperService : Service() {
                 val changed = WakeFilter.capsChanged(lastCaps ?: snap, snap)
                 lastCaps = snap
                 if (changed) wakeOnce("onCapabilitiesChanged")
-                // A4 降级解：每次 capabilities 变化都看一次 VPN 系统事实（钥匙图标）。
-                onVpnFact(caps.hasTransport(NetworkCapabilities.TRANSPORT_VPN))
+                // 网络是否适合校园认证：VPN 或只剩蜂窝（开热点 AP 时手机通常
+                // 掉 Wi-Fi）都暂停自动登录，避免 TUN 抓走/用蜂窝撞门户。
+                val vpn = caps.hasTransport(NetworkCapabilities.TRANSPORT_VPN)
+                val cellularOnly = caps.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) &&
+                    !caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) &&
+                    !caps.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET)
+                onNetworkFact(vpn, cellularOnly)
             }
         }
         cm.registerDefaultNetworkCallback(cb)
@@ -98,11 +103,11 @@ class KeeperService : Service() {
         lastCaps = null
     }
 
-    /** 用户原本的 auto_reconnect 设定（首次 VPN 事件时从 /state 采一次；
+    /** 用户原本的 auto_reconnect 设定（首次网络事件时从 /state 采一次；
      *  不能被暂停态污染——所以只采一次，之后一直用它做恢复目标）。 */
     @Volatile private var userAutoReconnect: Boolean? = null
 
-    private fun onVpnFact(vpnPresent: Boolean) {
+    private fun onNetworkFact(vpnPresent: Boolean, cellularOnly: Boolean) {
         if (userAutoReconnect == null) {
             userAutoReconnect = runCatching {
                 org.json.JSONObject(CnalKernel.state())
@@ -110,14 +115,24 @@ class KeeperService : Service() {
             }.getOrDefault(true)
         }
         val target = userAutoReconnect ?: return // 防御性：上面刚赋值，正常不可能为空
-        when (vpnGuard.onVpnChanged(vpnPresent, target)) {
+        when (vpnGuard.onNetworkChanged(vpnPresent, cellularOnly, target)) {
             VpnGuard.Action.PAUSE -> {
                 CnalKernel.setAutoReconnect(false)
-                notify("梯子已开，守护暂停自动登录（探测照常，避免误判掉线反复登录）")
+                val why = when (vpnGuard.pauseReason()) {
+                    "vpn" -> "梯子已开"
+                    "cellular" -> "当前走蜂窝（未连校园 Wi-Fi）"
+                    else -> "网络环境变化"
+                }
+                notify("$why，守护暂停自动登录（探测照常，避免误判掉线反复登录）")
             }
             VpnGuard.Action.RESUME -> {
                 CnalKernel.setAutoReconnect(true)
-                notify("梯子已关，守护恢复自动登录")
+                val why = when (vpnGuard.pauseReason()) {
+                    "vpn" -> "梯子已关"
+                    "cellular" -> "已连上 Wi-Fi"
+                    else -> "网络恢复"
+                }
+                notify("$why，守护恢复自动登录")
             }
             VpnGuard.Action.NONE -> Unit
         }

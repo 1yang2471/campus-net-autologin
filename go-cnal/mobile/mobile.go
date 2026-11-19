@@ -43,6 +43,9 @@ var (
 	// sourceLog 收集物理源/重发现打印（安卓 stdout 不可见），供 LogsJSON 用。
 	sourceLogMu sync.Mutex
 	sourceLog   []string
+	// detectV4 最近一次注入的物理 v4（首跑门户探测钉源用；空 = 尚未注入）。
+	detectV4Mu sync.Mutex
+	detectV4   string
 )
 
 // Wake 事件驱动唤醒（AAR 导出，Kotlin NetworkCallback 调）：打断 beatLoop
@@ -178,7 +181,30 @@ func SetPhysicalSources(v4, v6 string) error {
 		}
 	}
 	app.SetPhysicalSources(app.PhysicalSources{V4: ip4, V6: ip6})
+	detectV4Mu.Lock()
+	detectV4 = v4 // 空串 = 清掉，探测会拒绝（物理栈纪律）
+	detectV4Mu.Unlock()
 	return nil
+}
+
+// DetectPortal 首跑门户探测（AAR 导出；Kotlin 先绑 Wi-Fi 并 SetPhysicalSources）。
+//
+// 与 cnal detect 同语义：未认证时公网锚点被 302 劫持，Location 自报门户地址，
+// 再拉登录页复核指纹；全程无凭据 GET。configPath 可为空（全默认）；存在时只
+// 读探测相关键（校园 DNS/锚点/登录页指纹）。
+//
+// 要求已注入物理 v4：安卓上 "自动发现源" 可能选到 rmnet/VPN 而不是已绑定的
+// Wi-Fi（物理栈纪律，见 AGENTS「探测/登录必须走物理栈」）；没有注入源时直接
+// 报错，不猜出口、不触网。
+func DetectPortal(configPath string) (string, error) {
+	detectV4Mu.Lock()
+	src := detectV4
+	detectV4Mu.Unlock()
+	if src == "" {
+		return "", errors.New("未注入物理 v4 源：先绑 Wi-Fi 再探测（物理栈纪律，不猜出口）")
+	}
+	opt := app.DetectOptionsFromConfig(configPath, src)
+	return app.DetectPortal(opt)
 }
 
 // SetPanelPage 注入单文件面板 HTML（cmd/cnalw 的 panel.html/css/js 拼好的

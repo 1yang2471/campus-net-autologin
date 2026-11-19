@@ -254,8 +254,9 @@ func onTrayReady(a *app.App) func() {
 						} else {
 							systray.SetIcon(ico)
 						}
-						systray.SetTooltip(snap.Label + " " + snap.Detail)
-						mState.SetTitle(snap.Label + " " + snap.Detail)
+						line := statusLine(snap)
+						systray.SetTooltip(line)
+						mState.SetTitle(line)
 						if a.Daemon.AutoReconnectOn() {
 							mAutoConn.Check()
 						} else {
