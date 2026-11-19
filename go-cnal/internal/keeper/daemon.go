@@ -93,6 +93,12 @@ type Daemon struct {
 	// UserPath 用户路径读数（系统栈，与浏览器同路；nil = 未接线，显示未知）。
 	// 只做展示，绝不参与判定——TUN/代理下它反映用户实际体验，不是认证真值。
 	UserPath func() PathReading
+	// ProbeSiblingAuth 非绑定物理源的认证态观察（nil = 未接线）。
+	// 返回「已连接但未认证」的源 IP（空 = 无/未知）。多网卡实证（2026-11-19）：
+	// keeper 只维护一个绑定源，网线在未认证 VLAN 时永远不被触碰，面板也看不
+	// 出来——Windows 双网卡下「无 Internet」黄叹号就是这么来的。只观察，
+	// **绝不**在这些卡上登录（登录出口仍只有当前绑定源一条）。
+	ProbeSiblingAuth func() []string
 	// OnFluxWarn 流量越阈事件缝（只读、零副作用）：每个阈值档在进程生命周期内
 	// 只回调一次，带档位与用量视图。壳层据此发托盘气泡/安卓通知；内核不弹窗、
 	// 不改自动连、不断网。nil = 不发。
@@ -138,22 +144,25 @@ type Daemon struct {
 
 	transientStreak int // 连续瞬态错误次数（达 5 升级长退避）
 
-	lastLogin     time.Time // 最近一次登录尝试时刻（LOGIN_MIN_INTERVAL 闸）
-	rejectUntil   time.Time // 登录退避截止时刻
-	frozenUntil   time.Time // 门户限频冻结闸截止（独立于退避，flux 复活不清除）
-	suspect       int       // 连续「登录成功但没修好」计数（熔断用）
-	sessFalse     int       // 「判死→重登答已在线」矛盾计数（flux 假阳性）
-	fluxOffUntil  time.Time // flux 探针自停截止（矛盾超限后 3600s）
-	v6At          time.Time // 上次 v6 观察时刻（60s 节流）
-	l2At          time.Time // 上次 L2 观察时刻（60s 节流）
-	sessAt        time.Time // 上次会话探针时刻（60s 节流）
-	sessRedAt     time.Time // L1 红时会话核实时刻（10s 下限）
-	sessRedKnown  bool      // L1 红时会话真值是否可得
-	sessRedAlive  bool      // L1 红时最近一次会话真值
-	userPathAt    time.Time // 上次用户路径探测时刻（5s 节流）
-	l2Restricted  bool      // 最近一次 L2 观察结果
-	l2WindowUntil time.Time // L2 受限提示保留窗口（恢复后仍提示 2×周期）
-	offlineStreak int       // L1 连续失败拍数（登录去抖；锚点绿即清零）
+	lastLogin     time.Time   // 最近一次登录尝试时刻（LOGIN_MIN_INTERVAL 闸）
+	rejectUntil   time.Time   // 登录退避截止时刻
+	frozenUntil   time.Time   // 门户限频冻结闸截止（独立于退避，flux 复活不清除）
+	suspect       int         // 连续「登录成功但没修好」计数（熔断用）
+	sessFalse     int         // 「判死→重登答已在线」矛盾计数（flux 假阳性）
+	fluxOffUntil  time.Time   // flux 探针自停截止（矛盾超限后 3600s）
+	v6At          time.Time   // 上次 v6 观察时刻（60s 节流）
+	l2At          time.Time   // 上次 L2 观察时刻（60s 节流）
+	sessAt        time.Time   // 上次会话探针时刻（60s 节流）
+	sessRedAt     time.Time   // L1 红时会话核实时刻（10s 下限）
+	sessRedKnown  bool        // L1 红时会话真值是否可得
+	sessRedAlive  bool        // L1 红时最近一次会话真值
+	userPathAt    time.Time   // 上次用户路径探测时刻（5s 节流）
+	siblingAt     time.Time   // 上次旁路网卡观察时刻（60s 节流）
+	siblingBusy   atomic.Bool // 旁路网卡探测在飞（单飞：慢探测不叠加）
+	siblingUnauth []string    // 最近一次观察到的「已连接但未认证」源（mu 护住）
+	l2Restricted  bool        // 最近一次 L2 观察结果
+	l2WindowUntil time.Time   // L2 受限提示保留窗口（恢复后仍提示 2×周期）
+	offlineStreak int         // L1 连续失败拍数（登录去抖；锚点绿即清零）
 
 	// 流量轮询（只读能力）：10 分钟节流查一次 userflux，供面板常驻显示与
 	// 越阈提醒。与会话判死的 flux 探针**分开**——那是 60s 一拍的账号级存活
@@ -210,6 +219,7 @@ func (d *Daemon) Tick() {
 	d.probeV6()
 	d.probeL2()
 	d.probeUserPath()
+	d.probeSiblings()
 	l1 := d.ProbeOnline()
 	if l1 {
 		d.offlineStreak = 0

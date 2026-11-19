@@ -38,6 +38,8 @@ func newAPI(cfg *daemonConfig, p *plumbing, d *keeper.Daemon) *api.Server {
 			Reason:      h.Reason,
 			ReasonLabel: api.ReasonText(h.Reason),
 			Action:      h.Action,
+			// 旁路网卡未认证观察（只展示；解释 Windows 黄叹号误报）。
+			UnauthSources: d.UnauthSiblings(),
 			Extra: map[string]bool{"session_dead": sessionDead, "free_mode": freeMode,
 				"auto_reconnect": d.AutoReconnectOn()},
 		}

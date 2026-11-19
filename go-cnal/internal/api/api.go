@@ -120,7 +120,11 @@ type Snapshot struct {
 	Reason      string          `json:"reason,omitempty"`
 	ReasonLabel string          `json:"reason_label,omitempty"`
 	Action      string          `json:"action,omitempty"`
-	Extra       map[string]bool `json:"extra,omitempty"`
+	// UnauthSources 其他物理网卡上「已连接但未认证」的源（只观察，不登录）。
+	// 多网卡下 Windows 联网指示取最差结果 → 黄叹号误报；面板据此把事实说清。
+	// 空 = 无旁路卡/全部已认证/无法判定（omitempty 保证旧客户端零影响）。
+	UnauthSources []string        `json:"unauth_sources,omitempty"`
+	Extra         map[string]bool `json:"extra,omitempty"`
 	// Flux 流量用量只读视图（低频轮询缓存；面板刷 /state 顺带取，不再单独
 	// 打 /flux）。nil = 未接线/还没查过，omitempty 保证旧客户端零影响。
 	Flux *keeper.FluxUsageView `json:"flux,omitempty"`

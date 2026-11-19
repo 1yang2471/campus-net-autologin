@@ -35,6 +35,12 @@ func newDaemon(cfg daemonConfig, p *plumbing) *keeper.Daemon {
 		out := probeAnchor(p.systemProbe, cfg)
 		return keeper.PathReading{OK: out.OK, Known: true, Detail: out.Detail}
 	}
+	// 旁路网卡观察（2026-11-19）：非绑定物理源的认证态只上报面板，解释
+	// Windows「无 Internet」黄叹号误报。安卓注入源模式由 Kotlin 管网络，跳过；
+	// 探测零凭据、60s 节流在内核，绝不在旁路卡上登录。
+	if _, _, injected := physicalSources(); !injected && p.currentV4 != nil {
+		d.ProbeSiblingAuth = func() []string { return p.siblingUnauth(cfg) }
+	}
 	d.PortalAlive = func() bool {
 		// 门户可达是「需要域名解析」的操作：绑源解析成功走绑源钉 IP，
 		// auto 下失败转系统栈（TUN 接管时与浏览器同路）；bound 手动模式

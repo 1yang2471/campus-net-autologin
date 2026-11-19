@@ -54,10 +54,10 @@
   button:disabled { opacity: .5; cursor: not-allowed; }
   button.primary { background: var(--accent); border-color: var(--accent); color: #10241a; font-weight: 600; }
   .actions { display: flex; gap: 12px; flex-wrap: wrap; }
-  .kv { display: flex; justify-content: space-between; padding: 4px 0; border-top: 1px solid var(--border); }
+  .kv { display: flex; justify-content: space-between; gap: 12px; padding: 4px 0; border-top: 1px solid var(--border); }
   .kv:first-of-type { border-top: 0; }
-  .kv dt { color: var(--text-2); }
-  .kv dd { font-variant-numeric: tabular-nums; }
+  .kv dt { color: var(--text-2); flex: 0 0 auto; }
+  .kv dd { font-variant-numeric: tabular-nums; text-align: right; min-width: 0; overflow-wrap: anywhere; }
   .settings label { display: block; margin-bottom: 6px; color: var(--text-2); }
   .settings input {
     display: block; width: 100%; margin-top: 2px;

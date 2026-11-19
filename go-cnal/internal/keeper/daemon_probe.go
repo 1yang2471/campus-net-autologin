@@ -135,6 +135,52 @@ func (d *Daemon) sessionMissThreshold() int {
 	return 2
 }
 
+// siblingProbeInterval 旁路网卡观察节流：与 L2/v6 同量级（60s）。每拍扫
+// 所有非绑定源会被枚举异常放大成请求风暴，且认证态不是心跳。
+const siblingProbeInterval = 60 * time.Second
+
+// probeSiblings 观察非绑定物理源的认证态（2026-11-19 多网卡实证：只维护一个
+// bind_ip，网线在未认证 VLAN 时不登录、不显示，用户只看到 Windows 黄叹号）。
+//
+// **异步 + 单飞**（2026-11-19 下午回归修复）：探测本身要走 DNS 解析 + HTTP，
+// 未认证 VLAN 上两项都可能吃满超时——每张卡 probe_timeout×2，两张卡就是十几秒。
+// 早先同步跑在 Tick 里，把 3 秒心跳拖成十几秒一拍（实测 7s 停顿反复出现）。
+// 现在：Tick 只做节流判定与起飞，探测在独立 goroutine 里跑；同一时刻最多一个
+// 在飞（siblingBusy），慢探测不会被下一拍叠加成风暴。
+func (d *Daemon) probeSiblings() {
+	if d.ProbeSiblingAuth == nil {
+		return
+	}
+	now := d.Now()
+	if !d.siblingAt.IsZero() && now.Sub(d.siblingAt) < siblingProbeInterval {
+		return
+	}
+	if d.siblingBusy.Swap(true) {
+		return // 上一轮还在飞：不叠加，等它自己落地
+	}
+	d.siblingAt = now
+	go func() {
+		defer d.siblingBusy.Store(false)
+		list := d.ProbeSiblingAuth()
+		d.mu.Lock()
+		d.siblingUnauth = list
+		d.mu.Unlock()
+	}()
+}
+
+// UnauthSiblings 最近一次观察到的「已连接但未认证」源（面板/回路快照用）。
+// 返回副本：调用方在别的 goroutine 读，不得与 Tick 写侧共享底层数组。
+func (d *Daemon) UnauthSiblings() []string {
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+	if len(d.siblingUnauth) == 0 {
+		return nil
+	}
+	out := make([]string, len(d.siblingUnauth))
+	copy(out, d.siblingUnauth)
+	return out
+}
+
 // setSessionDead 会话判死标记（与 View 的加锁读配对）。
 func (d *Daemon) setSessionDead(dead bool) {
 	d.mu.Lock()

@@ -55,6 +55,7 @@ async function refresh() {
     setGlyph(s.color, s.state);
     document.getElementById("v4").textContent = s.v4_src || "未绑定";
     document.getElementById("v6").textContent = s.v6_src || "无 IPv6 源";
+    renderNics(s.unauth_sources);
     document.getElementById("route").textContent = s.route || "尚未选路";
     document.getElementById("sess").textContent = s.extra && s.extra.session_dead ? "已判死（重连中）" : "正常";
     document.getElementById("free").textContent = s.extra && s.extra.free_mode ? "已进入（自动检测）" : "未触发";
@@ -69,6 +70,18 @@ async function refresh() {
     document.getElementById("detail").textContent = "回路 API 不可达（" + e.message + "）";
     setGlyph("", "paused");
   }
+}
+
+// 旁路网卡（2026-11-19）：已连接但未认证的其他物理源。Windows 双网卡下
+// 联网指示取最差结果——把事实说清楚，用户才知道黄叹号不等于断网。
+// 字段缺失（旧内核）时显示占位，不编造。
+function renderNics(list) {
+  const el = document.getElementById("nics");
+  if (!el) return;
+  const ips = Array.isArray(list) ? list.filter(x => typeof x === "string" && x) : [];
+  el.textContent = ips.length
+    ? ips.join("、") + "（已连接未认证；Windows 可能误报无 Internet）"
+    : "—";
 }
 
 // 双读数（2026-11-18）：认证（物理栈）+ 用户路径（系统栈）+ 原因一句话。
