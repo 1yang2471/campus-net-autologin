@@ -323,96 +323,11 @@ func (d *Daemon) Tick() {
 		return
 	}
 	// 重连点：离线拍（锚点红真掉线 / 会话判死假在线落到此）。成功点亮在线
-	// 并清判死与检测态（Python：重连成功即解除 flux 判死）；失败时锚点绿下
-	// 的不受理是免会话态的直接证据——连续 2 次即学得（FREE_DETECT_STREAK）。
+	// 并清判死与检测态；失败时锚点绿下的不受理是免会话态的直接证据——连续
+	// 2 次即学得（FREE_DETECT_STREAK）。分支细节在 daemon_login.go。
 	if d.Login != nil {
-		d.lastLogin = now
-		_, _, _, wasDead, _ := d.View()
-		resp, err := d.Login()
-		if err == nil {
-			d.setSessionDead(false)
-			d.setFreeMode(false)
-			d.freeStreak = 0
-			d.invalidateSessionCache() // 登录后会话已变：下次 L1 红须重新问门户
-			// SESSION_FALSE 自停闸：判死→重登→门户答「已在线」= flux 在撒谎，
-			// 矛盾 ×3 → 探针自停 3600s（假判死不得变成登录风暴）。
-			if wasDead && alreadyOnline(resp) {
-				d.sessFalse++
-				if d.sessFalse >= sessFalseLimit {
-					d.fluxOffUntil = now.Add(sessFalseDisable)
-					d.sessFalse = 0
-				}
-			}
-			d.suspect++
-			if d.suspect >= suspectLimit {
-				d.rejectUntil = now.Add(d.rejectBackoff)
-				d.suspect = 0
-				d.setState(StateRejected, "连续 3 次登录成功但探测仍失败——疑似误判，熔断退避")
-				return
-			}
-			// 判定链健康：清退避与瞬态连击（Python 成功分支 reject_until=0、
-			// transient_streak=0 同源）。
-			d.rejectUntil = time.Time{}
-			d.transientStreak = 0
-			d.setState(StateOnline, "")
-			return
-		} else {
-			// 出口在门槛放行后失效：这次登录没有发出，不能算一次尝试——
-			// 清掉 lastLogin、不进退避/熔断，报状态并请组合根重选。
-			if errors.Is(err, ErrEgressInvalid) {
-				d.lastLogin = time.Time{}
-				d.setState(StateOffline, err.Error())
-				if d.OnEgressInvalid != nil {
-					d.OnEgressInvalid()
-				}
-				return
-			}
-			if errors.Is(err, ErrEgressPortalUnreachable) {
-				d.lastLogin = time.Time{}
-				d.setState(StatePortalDown, err.Error())
-				if d.OnPortalDown != nil {
-					d.OnPortalDown()
-				}
-				return
-			}
-			// 门户限频冻结：独立闸门（Python _frozen_until 同源）——普通退避
-			// 会被 flux 复活清零，冻结闸不会，否则「抖动→放行→再撞→更深冻结」。
-			if frozen, wait := freezeWait(err.Error(), d.marks, d.rejectBackoff); frozen {
-				d.frozenUntil = now.Add(wait)
-				d.rejectUntil = now.Add(wait)
-				d.setState(StateRejected, err.Error())
-				return
-			}
-			// 速率闸门（app 层哨兵）：Python 显示 offline 而非 rejected。
-			if errors.Is(err, ErrRateCapped) {
-				d.rejectUntil = now.Add(d.transientBackoff)
-				d.setState(StateOffline, err.Error())
-				return
-			}
-			// 拒绝分类退避（Python handle_rejection 同源）：瞬态错误短退避快速
-			// 重试（防明早时段切换卡 10 分钟），连续 5 次升级长退避；硬错误
-			// （密码/额度/锁定）直接长退避。
-			wait := d.rejectBackoff
-			if d.marks.transientMarked(err.Error()) {
-				d.transientStreak++
-				if d.transientStreak < transientStreakLimit {
-					wait = d.transientBackoff
-				}
-			} else {
-				d.transientStreak = 0
-			}
-			d.rejectUntil = now.Add(wait)
-			if l1 {
-				d.freeStreak++
-				if d.freeStreak >= freeDetectStreak {
-					d.setFreeMode(true)
-					d.setState(StateFreeWindow, "免认证时段（自动检测）：公网可用、门户不受理登录")
-					return
-				}
-			}
-			d.setState(StateRejected, err.Error())
-			return
-		}
+		d.doLogin(now, l1)
+		return
 	}
 	d.setState(StateOffline, "")
 }
