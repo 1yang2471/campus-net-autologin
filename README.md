@@ -10,7 +10,7 @@
 | 目录 | 版本 | 平台 | 说明 |
 |---|---|---|---|
 | 根目录 | Python v1.0.14 | Windows | 原始实现，托盘常驻。`python tests_tdd.py` 跑测试 |
-| [`go-cnal/`](go-cnal/) | Go v1.0.0 | Windows | Python 版的 Go 重写，同一内核跑托盘/无头/Android 三种壳。`go test ./...` 跑测试 |
+| [`go-cnal/`](go-cnal/) | Go v2.1.0-go | Windows | Python 版的 Go 重写，同一内核跑托盘/无头/Android 三种壳。`go test ./...` 跑测试 |
 | [`go-cnal-android/`](go-cnal-android/) | Kotlin M1 | Android | Go 内核的 Android 壳（AAR + 前台服务）。`./gradlew :app:testDebugUnitTest` 跑测试 |
 
 三版共用同一套守护语义，但各自独立发布。Go 版与 Android 版只在本校（ac_portal 族）验证过，异校未实测。
