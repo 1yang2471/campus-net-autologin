@@ -388,7 +388,12 @@ document.getElementById("flux-btn").addEventListener("click", async (ev) => {
   el.textContent = "查询中…";
   try {
     const r = await fetch("/flux", { headers: H });
-    const data = await r.json().catch(() => null);
+    // body 只读一次：先取全文再解析 JSON。旧写法 r.json() 消费 body 后，
+    // 错误分支再 r.text() 会抛 body stream already read，把真实错误盖掉
+    // （真机实证 2026-11-19）。
+    const raw = await r.text();
+    let data = null;
+    try { data = JSON.parse(raw) } catch {}
     if (r.ok && data) {
       // 键名是校事实（参考校：当天流量/日流量额；他校可能：已用流量/剩余流量）。
       // 常见键按优先级展示；全都没有就展示其它字段——绝不把「用户名称」当流量。
@@ -402,7 +407,7 @@ document.getElementById("flux-btn").addEventListener("click", async (ev) => {
       el.title = "查询于 " + new Date().toLocaleTimeString("zh-CN", { hour12: false }) + "\n" +
         Object.entries(data).map(([k, v]) => k + "：" + v).join("\n");
     } else {
-      el.textContent = "查询失败：" + (data && data["错误"] ? data["错误"] : (await r.text() || r.status));
+      el.textContent = "查询失败：" + (data && data["错误"] ? data["错误"] : (raw || r.status));
       el.title = "";
     }
   } catch (e) {
