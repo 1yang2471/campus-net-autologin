@@ -8,6 +8,7 @@ import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.view.Gravity
 import android.util.TypedValue
 import android.widget.Button
 import android.widget.EditText
@@ -16,6 +17,8 @@ import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.Toast
 import androidx.core.content.ContextCompat
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowInsetsCompat
 import java.io.File
 import java.time.ZoneId
 
@@ -187,12 +190,24 @@ class DeveloperActivity : Activity() {
             layoutParams = LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT, dp(260))
         })
-        return ScrollView(this).apply { addView(root) }
+        // 同 MainActivity：edge-to-edge 补系统栏内边距，防标题条/状态栏压内容
+        // （2026-11-19 真机取证）。
+        return ScrollView(this).apply {
+            addView(root)
+            ViewCompat.setOnApplyWindowInsetsListener(this) { v, insets ->
+                val bars = insets.getInsets(WindowInsetsCompat.Type.systemBars())
+                v.setPadding(bars.left, bars.top, bars.right, bars.bottom)
+                insets
+            }
+        }
     }
 
     private fun row(vararg buttons: Button): LinearLayout = LinearLayout(this).apply {
         orientation = LinearLayout.HORIZONTAL
-        buttons.forEach { addView(it, LinearLayout.LayoutParams(0, dp(48), 1f)) }
+        // 同 MainActivity：高度自适应，行高下限 48dp，防换行按钮第二行被裁
+        gravity = Gravity.CENTER_VERTICAL
+        minimumHeight = dp(48)
+        buttons.forEach { addView(it, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)) }
     }
 
     private fun start() {

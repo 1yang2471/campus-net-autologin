@@ -7,6 +7,7 @@ import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.view.Gravity
 import android.util.TypedValue
 import android.widget.Button
 import android.widget.EditText
@@ -15,6 +16,8 @@ import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.Toast
 import androidx.core.content.ContextCompat
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowInsetsCompat
 
 /**
  * 产品首屏：状态摘要 + 「启动 M1 守护」/「打开面板」/「开发者选项」。
@@ -170,7 +173,17 @@ class MainActivity : Activity() {
             },
         ))
 
-        return ScrollView(this).apply { addView(root) }
+        // Android 15 edge-to-edge（targetSdk 35）：内容从屏幕顶画起，主题自带的
+        // 窗口标题条会整段压住首屏文字（真机取证 2026-11-19：标题/副标题被盖、
+        // 说明首行削半截）。NoActionBar + 根视图补系统栏内边距（同 PanelActivity）。
+        return ScrollView(this).apply {
+            addView(root)
+            ViewCompat.setOnApplyWindowInsetsListener(this) { v, insets ->
+                val bars = insets.getInsets(WindowInsetsCompat.Type.systemBars())
+                v.setPadding(bars.left, bars.top, bars.right, bars.bottom)
+                insets
+            }
+        }
     }
 
     private fun refreshStatus() {
@@ -184,7 +197,10 @@ class MainActivity : Activity() {
 
     private fun row(vararg buttons: Button): LinearLayout = LinearLayout(this).apply {
         orientation = LinearLayout.HORIZONTAL
-        buttons.forEach { addView(it, LinearLayout.LayoutParams(0, dp(48), 1f)) }
+        // 按钮高度自适应：定高 48dp 会裁掉换行按钮的第二行（真机实证），行高下限 48dp
+        gravity = Gravity.CENTER_VERTICAL
+        minimumHeight = dp(48)
+        buttons.forEach { addView(it, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)) }
     }
 
     private fun dp(v: Int): Int =
