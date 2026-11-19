@@ -195,10 +195,32 @@ object CnalKernel {
         if (!ini.exists()) {
             throw IllegalStateException("缺少 config.ini：请把门户配置放进 app 私有目录")
         }
+        // 校园 DNS 自动补全（2026-11-19 真机摩擦）：新装机的 config.ini 里
+        // campus_dns 只是注释占位，用户得从 PC 抄；没填时物理栈解析失败、
+        // 门户路径回退系统栈并在面板亮红字。DHCP 早就把 DNS 下发了——就在
+        // 已绑定 Wi-Fi 的 LinkProperties 里。已有生效值不覆盖（面板可手改）。
+        val campusDns = CampusDns.pick(bound.dns)
+        if (campusDns.isNotEmpty()) {
+            val lines = ini.readLines()
+            val fixed = CampusDns.ensure(lines, campusDns)
+            if (fixed != lines) ini.writeText(fixed.joinToString("\n") + "\n")
+        }
         val url = Mobile.start(ini.absolutePath)
         panelUrl = url
         lastError = ""
         return url
+    }
+
+    /**
+     * 首跑门户探测（首屏「自动探测门户」）：先注入已绑定 Wi-Fi 的物理源
+     * （Go 侧钉源，物理栈纪律），再调无凭据 GET 探测（302 劫持页自报门户
+     * + 登录页指纹复核）。返回门户基址，失败抛带诊断的异常。会触网、耗时
+     * 数秒——调用方必须在后台线程。
+     */
+    fun detectPortal(context: Context, bound: NetBinder.Bound): String {
+        injectSources(bound)
+        val ini = File(context.filesDir, "config.ini")
+        return Mobile.detectPortal(if (ini.exists()) ini.absolutePath else "")
     }
 
     /**

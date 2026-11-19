@@ -22,6 +22,9 @@ class NetBinder(context: Context) {
         // 该网络全部 v6 地址（保序）：第一个 v6 常是 fe80 链路本地，GUA 在
         // 后面——v6 注入要从全列表挑，不能只看 v6 一个（2026-11-12 真机实证）。
         val v6All: List<String> = emptyList(),
+        // 该链路 DHCP/RDNSS 下发的 DNS 服务器（校园 DNS 自动注入的原料：
+        // 新装机不必再从 PC 手抄 campus_dns，2026-11-19）。
+        val dns: List<String> = emptyList(),
     )
 
     fun bind(): Bound {
@@ -34,7 +37,7 @@ class NetBinder(context: Context) {
         val net = nets[idx]
         val ok = cm.bindProcessToNetwork(net)
         val lp = cm.getLinkProperties(net)
-        return Bound(ok, label(net), addrOf(lp, 4), addrOf(lp, 6), v6AllOf(lp))
+        return Bound(ok, label(net), addrOf(lp, 4), addrOf(lp, 6), v6AllOf(lp), dnsOf(lp))
     }
 
     private fun candidate(net: Network): NetCandidate {
@@ -66,6 +69,10 @@ class NetBinder(context: Context) {
         }
         return "—"
     }
+
+    /** 该链路的 DNS 服务器（v4/v6 都收；挑哪个由 CampusDns.pick 决定）。 */
+    private fun dnsOf(lp: LinkProperties?): List<String> =
+        lp?.dnsServers?.mapNotNull { it.hostAddress } ?: emptyList()
 
     /** 该链路全部 v6 地址（保序，带 /prefix；挑 GUA 的原料，见 Bound.v6All）。 */
     private fun v6AllOf(lp: LinkProperties?): List<String> {

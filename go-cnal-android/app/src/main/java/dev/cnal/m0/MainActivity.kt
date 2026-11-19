@@ -32,6 +32,7 @@ import androidx.core.view.WindowInsetsCompat
 class MainActivity : Activity() {
     private val ui = Handler(Looper.getMainLooper())
     private lateinit var status: TextView
+    private lateinit var server: EditText
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -144,7 +145,16 @@ class MainActivity : Activity() {
             setPadding(0, dp(16), 0, dp(4))
         })
 
-        val server = EditText(this).apply {
+        // 免手填（2026-11-19）：未认证时门户会 302 劫持到登录页自报地址，
+        // 与 PC 首配向导同一条探测链，只是搬到首屏一键。
+        root.addView(row(
+            Button(this).apply {
+                text = "自动探测门户（免手填）"
+                setOnClickListener { detectPortal(this) }
+            },
+        ))
+
+        server = EditText(this).apply {
             hint = "门户地址（如 https://a.stu.edu.cn）"
             inputType = android.text.InputType.TYPE_TEXT_VARIATION_URI
             setText(CnalKernel.savedServer(this@MainActivity))
@@ -184,6 +194,40 @@ class MainActivity : Activity() {
                 insets
             }
         }
+    }
+
+    /**
+     * 自动探测门户：绑 Wi-Fi → 注入物理源 → Go 无凭据 GET 探测（302 劫持页
+     * 自报地址 + 登录页指纹复核）→ 回填并保存。后台线程执行（探测会触网、
+     * 最坏数秒）；按钮在途锁定防重入。
+     */
+    private fun detectPortal(b: Button) {
+        if (!b.isEnabled) return
+        b.isEnabled = false
+        val label = b.text
+        b.text = "探测中…"
+        Thread({
+            val result = runCatching {
+                val bound = NetBinder(this).bind()
+                CnalKernel.detectPortal(this, bound)
+            }
+            ui.post {
+                b.isEnabled = true
+                b.text = label
+                result
+                    .onSuccess { url ->
+                        server.setText(url)
+                        val msg = runCatching {
+                            CnalKernel.saveServer(this, url)
+                            "已探测并保存门户：$url"
+                        }.getOrElse { "已探测：$url（保存失败：${it.message}）" }
+                        Toast.makeText(this, msg, Toast.LENGTH_LONG).show()
+                    }
+                    .onFailure { e ->
+                        Toast.makeText(this, "探测失败：${e.message}", Toast.LENGTH_LONG).show()
+                    }
+            }
+        }, "detect-portal").start()
     }
 
     private fun refreshStatus() {
