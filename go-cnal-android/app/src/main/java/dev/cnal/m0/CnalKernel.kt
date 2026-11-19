@@ -51,12 +51,16 @@ object CnalKernel {
             return
         }
         ini.writeText(
-            "; M1 首跑生成（端点路径是校事实，异校请核对 README）\n" +
+            "; M1 首跑生成（端点路径与登录页指纹是校事实，异校请核对 README）\n" +
                 "[keeper]\n" +
                 "server = $s\n" +
                 "login_path = /ac_portal/login.php\n" +
                 "login_page = /ac_portal/default/pc.html?tabs=pwd\n" +
-                "; campus_dns = 10.x.x.x   ; 已知校园 DNS 时填上\n",
+                // 自动探测的指纹复核用。默认档 ac_portal/pwdLogin 在本校登录页
+                // 判负（正文 JS 渲染，2026-11-11 实测），模板随参考校一并给出；
+                // 异校对不上时改这一行即可，不影响登录链路。
+                "login_page_marks = 上网认证系统\n" +
+                "; campus_dns = 10.x.x.x   ; 已知校园 DNS 时填上（缺省会从 Wi-Fi DHCP 自动补）\n",
         )
     }
 
