@@ -240,10 +240,6 @@ func (d *Daemon) Tick() {
 	// 多通道观察同样脱离判定：它是「别的卡是什么状态」的事实，与主链路
 	// 在线与否无关；探测异步跑，不拖心跳（见 channel.go）。
 	d.Channels.tick()
-	// 通道级自愈（2026-11-20 双通道 M2）：未认证的通道各自登录，与主链路
-	// 共用账号级闸门。放在主链路判定**之前**——主链路在线时通道也可能
-	// 需要补登（插网线后有线口未认证，而 WiFi 一直在线）。
-	d.tryChannelLogin(d.Now())
 	l1 := d.ProbeOnline()
 	if l1 {
 		d.offlineStreak = 0
@@ -258,6 +254,11 @@ func (d *Daemon) Tick() {
 		d.pollFlux()
 		_, _, _, sessionDead, _ := d.View()
 		if !sessionDead {
+			// 通道级自愈（2026-11-20 双通道 M2）：**主链路健康时**才轮到通道。
+			// 30s 闸门只有一份，预算归主——主链路掉线时若通道抢闸，主恢复
+			// 会被拖慢 30 秒；11-20 的场景本来就是「WiFi 在线、有线未认证」，
+			// 反过来（主掉线时通道先登）没有对应场景。
+			d.tryChannelLogin(d.Now())
 			d.setState(StateOnline, d.onlineDetail())
 			return
 		}

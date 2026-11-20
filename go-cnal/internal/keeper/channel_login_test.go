@@ -208,3 +208,95 @@ func TestChannelLoginRejectionSharesBackoff(t *testing.T) {
 		t.Fatalf("退避窗口内不得再登录通道，实际多发 %d 次", len(log)-before)
 	}
 }
+
+// 行为：**主链路掉线时通道登录让位**——30s 闸门只有一份，预算归主链路。
+// 主掉线 + 通道未认证时，通道不得抢闸（否则把主恢复拖慢 30 秒）；
+// 主链路恢复在线后，通道才补登。
+//
+// 11-20 的场景本来就是「WiFi 在线、有线未认证」才需要补有线——
+// 主链路掉线时先修主，是账号级预算语义的正确取向。
+func TestChannelLoginYieldsWhenMainOffline(t *testing.T) {
+	clk := time.Unix(1000, 0)
+	var log []string
+	views := []ChannelView{{ID: "以太网|10.141.53.34", Iface: "以太网", IP: "10.141.53.34"}}
+	online := true
+	d := newChannelLoginDaemon(&clk, &views, &log)
+	d.ProbeOnline = func() bool { return online }
+
+	// 拍一次触发观察，等落地。
+	d.Tick()
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) && len(d.ChannelViews()) == 0 {
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	// 主链路掉线：通道不得登录（预算归主）。
+	online = false
+	d.Tick()
+	time.Sleep(100 * time.Millisecond)
+	if len(log) != 0 {
+		t.Fatalf("主链路掉线时通道不得抢登录预算，实际发出 %v", log)
+	}
+
+	// 主链路恢复在线：通道才补登。
+	online = true
+	clk = clk.Add(61 * time.Second)
+	d.Tick()
+	deadline = time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) && len(log) == 0 {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if len(log) != 1 {
+		t.Fatalf("主链路恢复后通道应补登一次，实际 %v", log)
+	}
+}
+
+// 行为：主链路登录成功 = 门户重新接受本账号 → 通道级退避一并解除。
+// 账号被拒（密码/额度）后用户改好了配置并手动重连成功——此时通道的退避
+// 已成陈账，不清掉通道会在退避期内拒绝自愈。
+func TestMainLoginSuccessClearsChannelBackoff(t *testing.T) {
+	clk := time.Unix(1000, 0)
+	var log []string
+	views := []ChannelView{{ID: "以太网|10.141.53.34", Iface: "以太网", IP: "10.141.53.34"}}
+	online := true
+	d := newChannelLoginDaemon(&clk, &views, &log)
+	d.ChannelLogin = func(v ChannelView) (string, error) {
+		log = append(log, v.ID)
+		return "", errors.New("密码不匹配")
+	}
+	d.ProbeOnline = func() bool { return online }
+	d.Login = func() (string, error) { return "logon success", nil }
+
+	// 主在线拍：通道登录被硬拒 → 通道退避生效。
+	d.Tick()
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) && len(d.ChannelViews()) == 0 {
+		time.Sleep(10 * time.Millisecond)
+	}
+	d.Tick()
+	deadline = time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) && len(log) == 0 {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if d.channelRejectDeadline().IsZero() {
+		t.Fatal("通道硬拒绝应进入通道退避")
+	}
+
+	// 主链路掉线并越过三拍去抖（每拍推进时钟，同时绕开通道的 60s 间隔与
+	// 30s 账号闸——它们不拦主链路：通道退避与主链路分账）。
+	online = false
+	clk = clk.Add(31 * time.Second)
+	d.Tick()
+	clk = clk.Add(time.Second)
+	d.Tick()
+	clk = clk.Add(time.Second)
+	d.Tick()
+	// 第三拍去抖到点：主链路登录（d.Login 成功）。
+	state, _, _, _, _ := d.View()
+	if state != StateOnline {
+		t.Fatalf("主链路登录成功后应在线，实际 %s", state)
+	}
+	if !d.channelRejectDeadline().IsZero() {
+		t.Fatal("主链路登录成功（账号被重新接受）后，通道退避应解除")
+	}
+}

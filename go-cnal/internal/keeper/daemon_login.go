@@ -49,6 +49,13 @@ func (d *Daemon) loginSucceeded(now time.Time, resp string, wasDead bool) {
 	// transient_streak=0 同源）。
 	d.rejectUntil = time.Time{}
 	d.transientStreak = 0
+	// 主链路登录成功 = 门户重新接受本账号 → 通道级退避一并解除
+	// （2026-11-20 双通道：通道退避记录的是「账号被拒」，主登录成功即证明
+	// 它已成陈账；不清掉通道会在退避期内拒绝自愈）。
+	d.mu.Lock()
+	d.channelReject = time.Time{}
+	d.channelFrozen = time.Time{}
+	d.mu.Unlock()
 	d.setState(StateOnline, "")
 }
 
