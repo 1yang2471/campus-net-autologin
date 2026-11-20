@@ -81,9 +81,17 @@ func newDaemon(cfg daemonConfig, p *plumbing) *keeper.Daemon {
 	// 不是 L2，报 ok 不误报。
 	d.ProbeL2 = func() string {
 		const l2Host = "www.baidu.com"
-		ip, err := netstack.ResolveBound(p.currentV4(), cfg.CampusDNS, l2Host, cfg.ProbeTimeout)
-		if err != nil {
-			return "ok" // DNS 都不通说明是 L1 问题，不是 L2
+		bound, berr := netstack.ResolveBound(p.currentV4(), cfg.CampusDNS, l2Host, cfg.ProbeTimeout)
+		// 目标是 v4 绑源客户端，必须是 v4 地址：绑源解析可能先回 v6（校园 DNS
+		// 对百度的 A/AAAA 双记录，2026-11-20 实测先给 240e:...），v4 源拨 v6
+		// 报 "no suitable address found" → 恒判「出口受限」假警告。
+		// 回退系统解析的 v4（与浏览器回落同路）；都拿不到就放弃观察——
+		// 探测自身失败不是出口受限。
+		ip, ok := l2Target(bound, berr, func() (net.IP, error) {
+			return netstack.ResolveSystem(l2Host)
+		})
+		if !ok {
+			return "ok"
 		}
 		// ipPin 必须是 host:port（pinnedDialer 直接 Dial 它）；裸 IP 会报
 		// missing port 让 L2 恒报 restricted（2026-11-08 发布截图实证）。
@@ -147,4 +155,24 @@ func newDaemon(cfg daemonConfig, p *plumbing) *keeper.Daemon {
 		return resp.Resp, nil
 	}
 	return d
+}
+
+// l2Target 选 L2 探测目标（v4 绑源客户端需要 v4 地址）：
+//   - 绑源解析给了 v4 → 直接用（校园 DNS 绑源，防 TUN fake-ip）；
+//   - 只有 v6 / 绑源失败 → 回退系统解析的 v4（与浏览器回落同路）；
+//   - 都拿不到 → ok=false，调用方放弃这次观察。
+//
+// 2026-11-20 真机修复：之前直接拿绑源解析结果（可能 v6）去喂 v4 客户端，
+// 探针必然失败 → 面板恒报「出口受限（大众站 TLS 被重置）」而实际网络正常。
+func l2Target(bound net.IP, boundErr error, sysV4 func() (net.IP, error)) (net.IP, bool) {
+	if boundErr == nil && bound != nil && bound.To4() != nil {
+		return bound, true
+	}
+	if sysV4 == nil {
+		return nil, false
+	}
+	if ip, err := sysV4(); err == nil && ip != nil && ip.To4() != nil {
+		return ip, true
+	}
+	return nil, false
 }

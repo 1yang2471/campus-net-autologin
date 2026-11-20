@@ -168,6 +168,9 @@ type Daemon struct {
 	l2At          time.Time   // 上次 L2 观察时刻（60s 节流）
 	sessAt        time.Time   // 上次会话探针时刻（60s 节流）
 	sessRedAt     time.Time   // L1 红时会话核实时刻（10s 下限）
+	// wasFreeWindow 上一拍的免认证窗口状态（边沿检测）：窗口刚结束的首拍
+	// 作废探针节流，立即核实会话——否则会误报在线最多 60 秒（2026-11-20）。
+	wasFreeWindow bool
 	sessRedKnown  bool        // L1 红时会话真值是否可得
 	sessRedAlive  bool        // L1 红时最近一次会话真值
 	userPathAt    time.Time   // 上次用户路径探测时刻（5s 节流）
@@ -240,6 +243,8 @@ func (d *Daemon) Tick() {
 	// 多通道观察同样脱离判定：它是「别的卡是什么状态」的事实，与主链路
 	// 在线与否无关；探测异步跑，不拖心跳（见 channel.go）。
 	d.Channels.tick()
+	// 免认证窗口结束的边沿：作废探针节流立即核实（语义在 freewindow.go）。
+	d.recheckOnFreeWindowEnd(d.inFreeWindow())
 	l1 := d.ProbeOnline()
 	if l1 {
 		d.offlineStreak = 0
