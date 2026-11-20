@@ -44,7 +44,8 @@ func newAPI(cfg *daemonConfig, p *plumbing, d *keeper.Daemon) *api.Server {
 			// （门户按源 IP 记会话）。label 由内核词表给出。
 			Channels: d.ChannelViews(),
 			Extra: map[string]bool{"session_dead": sessionDead, "free_mode": freeMode,
-				"auto_reconnect": d.AutoReconnectOn()},
+				"auto_reconnect": d.AutoReconnectOn(),
+				"multi_channel":  d.MultiChannelOn()},
 		}
 		// 原因覆盖状态名：本地节流不再冒充「登录被拒」，绑定失效不再只说「离线」。
 		if lbl, ok := api.ReasonLabel(h.Reason); ok {
@@ -179,6 +180,9 @@ func newAPI(cfg *daemonConfig, p *plumbing, d *keeper.Daemon) *api.Server {
 		}
 		if v, ok := values["auto_reconnect"]; ok {
 			d.SetAutoReconnect(v == "true" || v == "1" || v == "on")
+		}
+		if v, ok := values["multi_channel"]; ok {
+			d.SetMultiChannel(v == "true" || v == "1" || v == "on")
 		}
 		if v, ok := values["free_windows"]; ok {
 			d.SetFreeWindows(v) // 内存与 ini 同时到位，面板回读也是新值

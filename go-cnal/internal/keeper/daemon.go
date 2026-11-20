@@ -106,6 +106,9 @@ type Daemon struct {
 	// Channels 多通道观察器（2026-11-20 双通道方案 M1）：nil = 不观察。
 	// 只观察、零凭据——通道级登录是 M2，且默认关（spec §8.2）。
 	Channels *ChannelGuard
+	// ChannelLogin 通道级登录缝（M2）：对指定通道发起登录（绑该通道源 IP）。
+	// nil = 未接线（不动作）。与主链路 Login 共用账号级闸门（见 channel_login.go）。
+	ChannelLogin ChannelLoginFn
 
 	// 对外暴露的展示字段：Tick goroutine 写，回路 API Snapshot / 托盘 tick
 	// goroutine 读——用 mu 护住（2026-11-08 发布审查 P0：只有 autoReconnect
@@ -129,6 +132,20 @@ type Daemon struct {
 	// 报状态、不自动登录（手动重连走独立路径不受限）。默认开。并发：Tick 在后台
 	// goroutine 读、面板/托盘开关在回路 goroutine 写 → 原子（读写走方法对）。
 	autoReconnect atomic.Bool
+	// multiChannel 通道级自愈开关（2026-11-20 双通道 M2）：默认**关**
+	// （沿用 11-19「旁路只观察不登录」的保守纪律）。开启后通道登录与主链路
+	// 共用账号级预算（见 channel_login.go）。
+	multiChannel atomic.Bool
+	// channelLastLogin 各通道最近一次登录尝试时刻（同一通道的最小尝试间隔）。
+	// 与主链路的 lastLogin 分开：主链路的 30s 闸是账号级共享的，这里的
+	// 60s 是「别让一条抖动通道反复烧预算」的通道级护栏。
+	channelLastLogin map[string]time.Time
+	// channelReject/channelFrozen 通道级退避与冻结闸（账号级：门户拒的是账号，
+	// 任一通道被拒，所有通道一起退避）。与主链路的 rejectUntil/frozenUntil
+	// **分账**：主链路的「会话仍活」分支会清 rejectUntil，会连带抹掉通道的
+	// 退避（2026-11-20 实现时踩到：退避刚设上就被抹，通道继续撞门户）。
+	channelReject time.Time
+	channelFrozen time.Time
 
 	// Now 时钟缝（节流/退避测试可控；默认 time.Now）。
 	Now func() time.Time
@@ -191,6 +208,7 @@ func NewDaemon(freeWindows string) *Daemon {
 		transientBackoff: defaultTransientBackoff,
 		fluxPollInterval: defaultFluxPollInterval,
 		fluxWarner:       newFluxWarner(defaultFluxWarnAt, defaultFluxCriticalAt),
+		channelLastLogin:  map[string]time.Time{},
 	}
 	d.autoReconnect.Store(true) // Python DEFAULTS auto_reconnect=true
 	return d
@@ -213,6 +231,12 @@ func (d *Daemon) SetBackoff(reject, transient time.Duration) {
 // SetAutoReconnect 切换自动重连开关（面板/托盘写，Tick 读——原子交接）。
 func (d *Daemon) SetAutoReconnect(on bool) { d.autoReconnect.Store(on) }
 
+// SetMultiChannel 切换通道级自愈开关（2026-11-20 双通道 M2）。默认关。
+func (d *Daemon) SetMultiChannel(on bool) { d.multiChannel.Store(on) }
+
+// MultiChannelOn 当前通道级自愈开关状态（快照/面板回显）。
+func (d *Daemon) MultiChannelOn() bool { return d.multiChannel.Load() }
+
 // AutoReconnectOn 当前开关状态（快照/菜单勾选回显）。
 func (d *Daemon) AutoReconnectOn() bool { return d.autoReconnect.Load() }
 
@@ -226,6 +250,10 @@ func (d *Daemon) Tick() {
 	// 多通道观察同样脱离判定：它是「别的卡是什么状态」的事实，与主链路
 	// 在线与否无关；探测异步跑，不拖心跳（见 channel.go）。
 	d.Channels.tick()
+	// 通道级自愈（2026-11-20 双通道 M2）：未认证的通道各自登录，与主链路
+	// 共用账号级闸门。放在主链路判定**之前**——主链路在线时通道也可能
+	// 需要补登（插网线后有线口未认证，而 WiFi 一直在线）。
+	d.tryChannelLogin(d.Now())
 	l1 := d.ProbeOnline()
 	if l1 {
 		d.offlineStreak = 0

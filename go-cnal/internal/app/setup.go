@@ -124,6 +124,7 @@ func (s *Setup) withAPI() *Setup {
 			"free_windows":   cur.FreeWindows,
 			"campus_dns":     cur.CampusDNS,
 			"auto_reconnect": fmt.Sprint(cur.AutoReconnect),
+			"multi_channel":  fmt.Sprint(cur.MultiChannel),
 			"bind_ip":        cur.BindIP,
 		}
 	}

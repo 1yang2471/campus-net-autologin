@@ -103,6 +103,13 @@ func newDaemon(cfg daemonConfig, p *plumbing) *keeper.Daemon {
 	// 多通道观察（2026-11-20 双通道 M1）：只观察、零凭据——每张物理卡各自
 	// 一份认证态（门户按源 IP 记会话）。当前绑定源不在其列（主链路已在判）。
 	wireChannels(d, p, cfg)
+	// 通道级自愈（M2）：默认关（11-19 纪律）；开启后未认证通道各自登录，
+	// 凭据绑**该通道的源 IP** 发往用户配置的门户，速率闸门与主链路共用
+	// 同一份账号级额度（p.rl 是单例）。
+	d.SetMultiChannel(cfg.MultiChannel)
+	d.ChannelLogin = func(v keeper.ChannelView) (string, error) {
+		return p.channelLogin(cfg, ChannelRef{ID: v.ID, Iface: v.Iface, IP: v.IP})
+	}
 	// 会话级存活探针（2026-11-11 实证：userflux 是账号级读数，会话释放后仍有
 	// 数据 → 只靠 flux 判不出「会话没了」，守护不会自动重登）。
 	// 走与登录同一个门户入口的 online_check（按请求源地址认栈、构造上无凭据），

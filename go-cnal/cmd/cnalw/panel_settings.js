@@ -94,6 +94,7 @@ async function loadConfig() {
     renderFreeWindows(c.free_windows || "");
     document.getElementById("f-bindip").value = c.bind_ip || "";
     document.getElementById("f-auto").checked = c.auto_reconnect !== "false";
+    document.getElementById("f-multich").checked = c.multi_channel === "true";
     advancedConfigView(c);
     document.getElementById("free-add").disabled = false;
     configLoaded = true;
@@ -253,6 +254,7 @@ document.getElementById("save").addEventListener("click", async (ev) => {
       server: document.getElementById("f-server").value.trim(),
       bind_ip: document.getElementById("f-bindip").value.trim(),
       auto_reconnect: document.getElementById("f-auto").checked ? "true" : "false",
+      multi_channel: document.getElementById("f-multich").checked ? "true" : "false",
     };
     if (configLoaded) {
       try {

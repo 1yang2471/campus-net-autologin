@@ -204,6 +204,7 @@
         <input id="f-bindip" autocomplete="off" spellcheck="false" placeholder="如 172.29.1.5">
       </label>
       <label class="check"><input id="f-auto" type="checkbox"> 掉线自动重连（关=只探测不自动登录）</label>
+      <label class="check"><input id="f-multich" type="checkbox"> 多通道自愈（未认证的其它网卡各自登录；共用账号级登录预算）</label>
       <details id="advanced">
         <summary id="adv-toggle">高级设置（网络参数与异校响应词表）</summary>
         <div class="adv-grid">
@@ -602,6 +603,7 @@ async function loadConfig() {
     renderFreeWindows(c.free_windows || "");
     document.getElementById("f-bindip").value = c.bind_ip || "";
     document.getElementById("f-auto").checked = c.auto_reconnect !== "false";
+    document.getElementById("f-multich").checked = c.multi_channel === "true";
     advancedConfigView(c);
     document.getElementById("free-add").disabled = false;
     configLoaded = true;
@@ -761,6 +763,7 @@ document.getElementById("save").addEventListener("click", async (ev) => {
       server: document.getElementById("f-server").value.trim(),
       bind_ip: document.getElementById("f-bindip").value.trim(),
       auto_reconnect: document.getElementById("f-auto").checked ? "true" : "false",
+      multi_channel: document.getElementById("f-multich").checked ? "true" : "false",
     };
     if (configLoaded) {
       try {

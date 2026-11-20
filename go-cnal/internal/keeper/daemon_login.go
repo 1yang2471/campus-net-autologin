@@ -90,15 +90,7 @@ func (d *Daemon) loginFailed(now time.Time, err error, l1 bool) {
 	// 拒绝分类退避（Python handle_rejection 同源）：瞬态错误短退避快速
 	// 重试（防明早时段切换卡 10 分钟），连续 5 次升级长退避；硬错误
 	// （密码/额度/锁定）直接长退避。
-	wait := d.rejectBackoff
-	if d.marks.transientMarked(err.Error()) {
-		d.transientStreak++
-		if d.transientStreak < transientStreakLimit {
-			wait = d.transientBackoff
-		}
-	} else {
-		d.transientStreak = 0
-	}
+	wait := d.classifyRejection(err)
 	d.rejectUntil = now.Add(wait)
 	if l1 {
 		d.freeStreak++
@@ -109,4 +101,19 @@ func (d *Daemon) loginFailed(now time.Time, err error, l1 bool) {
 		}
 	}
 	d.setState(StateRejected, err.Error())
+}
+
+// classifyRejection 拒绝分类：瞬态错误短退避（连续 5 次升级长退避），
+// 硬错误（密码/额度/锁定）直接长退避。主链路与通道登录**共用这一套**
+// ——门户拒的是账号，两条路径对「这次拒绝该退多久」的判断必须一致。
+func (d *Daemon) classifyRejection(err error) time.Duration {
+	if d.marks.transientMarked(err.Error()) {
+		d.transientStreak++
+		if d.transientStreak < transientStreakLimit {
+			return d.transientBackoff
+		}
+		return d.rejectBackoff
+	}
+	d.transientStreak = 0
+	return d.rejectBackoff
 }
