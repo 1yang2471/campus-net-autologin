@@ -18,5 +18,6 @@
 ## 路标
 
 - 物理栈与双栈设计决策（E1–E16 逐条带 `keeper.py:行号`）：`docs/superpowers/specs/2026-11-06-dualstack-and-go-port-design.md`
+- 有线口认证机制与双通道守护升级方案（2026-11-20 实测）：`docs/superpowers/specs/2026-11-20-wired-port-auth-and-dual-channel-guard.md`
 - 异校实测报告模板：`.github/ISSUE_TEMPLATE/compat_report.md`
 - 用户文档（中文权威）：`README.md`
