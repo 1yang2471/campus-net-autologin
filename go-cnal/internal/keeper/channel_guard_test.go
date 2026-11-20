@@ -127,3 +127,33 @@ func TestChannelGuardDropsVanishedChannel(t *testing.T) {
 		t.Fatalf("通道消失后不得保留旧读数，实际 %+v", got)
 	}
 }
+
+// 行为（2026-11-19 回归教训）：通道探测阻塞时，Tick 仍须快速返回——
+// 探测要走 DNS + HTTP，未认证 VLAN 上两项都可能吃满超时；同步跑在 Tick 里
+// 会把 3 秒心跳拖成十几秒一拍。
+func TestChannelGuardProbeDoesNotBlockTick(t *testing.T) {
+	clk := time.Unix(1000, 0)
+	views := []ChannelView{{ID: "以太网|10.141.53.34", Iface: "以太网", IP: "10.141.53.34"}}
+	d := NewDaemon("")
+	d.Now = func() time.Time { return clk }
+	d.ProbeOnline = func() bool { return true }
+	d.PortalAlive = func() bool { return true }
+	d.FetchFlux = func() (map[string]string, error) { return map[string]string{"用户名称": "u"}, nil }
+	g := NewChannelGuard()
+	g.Now = func() time.Time { return clk }
+	g.Enumerate = func() []ChannelView { return views }
+	release := make(chan struct{})
+	g.Probe = func(v ChannelView) string {
+		<-release // 探测卡住（模拟慢网络）
+		return ChannelUnauth
+	}
+	d.Channels = g
+
+	start := time.Now()
+	d.Tick()
+	elapsed := time.Since(start)
+	if elapsed > 500*time.Millisecond {
+		t.Errorf("Tick 被通道探测阻塞了 %v——探测必须异步", elapsed)
+	}
+	close(release)
+}

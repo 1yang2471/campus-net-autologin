@@ -93,12 +93,6 @@ type Daemon struct {
 	// UserPath 用户路径读数（系统栈，与浏览器同路；nil = 未接线，显示未知）。
 	// 只做展示，绝不参与判定——TUN/代理下它反映用户实际体验，不是认证真值。
 	UserPath func() PathReading
-	// ProbeSiblingAuth 非绑定物理源的认证态观察（nil = 未接线）。
-	// 返回「已连接但未认证」的源 IP（空 = 无/未知）。多网卡实证（2026-11-19）：
-	// keeper 只维护一个绑定源，网线在未认证 VLAN 时永远不被触碰，面板也看不
-	// 出来——Windows 双网卡下「无 Internet」黄叹号就是这么来的。只观察，
-	// **绝不**在这些卡上登录（登录出口仍只有当前绑定源一条）。
-	ProbeSiblingAuth func() []string
 	// OnFluxWarn 流量越阈事件缝（只读、零副作用）：每个阈值档在进程生命周期内
 	// 只回调一次，带档位与用量视图。壳层据此发托盘气泡/安卓通知；内核不弹窗、
 	// 不改自动连、不断网。nil = 不发。
@@ -177,9 +171,6 @@ type Daemon struct {
 	sessRedKnown  bool        // L1 红时会话真值是否可得
 	sessRedAlive  bool        // L1 红时最近一次会话真值
 	userPathAt    time.Time   // 上次用户路径探测时刻（5s 节流）
-	siblingAt     time.Time   // 上次旁路网卡观察时刻（60s 节流）
-	siblingBusy   atomic.Bool // 旁路网卡探测在飞（单飞：慢探测不叠加）
-	siblingUnauth []string    // 最近一次观察到的「已连接但未认证」源（mu 护住）
 	l2Restricted  bool        // 最近一次 L2 观察结果
 	l2WindowUntil time.Time   // L2 受限提示保留窗口（恢复后仍提示 2×周期）
 	offlineStreak int         // L1 连续失败拍数（登录去抖；锚点绿即清零）
@@ -246,7 +237,6 @@ func (d *Daemon) Tick() {
 	d.probeV6()
 	d.probeL2()
 	d.probeUserPath()
-	d.probeSiblings()
 	// 多通道观察同样脱离判定：它是「别的卡是什么状态」的事实，与主链路
 	// 在线与否无关；探测异步跑，不拖心跳（见 channel.go）。
 	d.Channels.tick()

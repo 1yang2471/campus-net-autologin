@@ -38,8 +38,10 @@ func newAPI(cfg *daemonConfig, p *plumbing, d *keeper.Daemon) *api.Server {
 			Reason:      h.Reason,
 			ReasonLabel: api.ReasonText(h.Reason),
 			Action:      h.Action,
-			// 旁路网卡未认证观察（只展示；解释 Windows 黄叹号误报）。
-			UnauthSources: d.UnauthSiblings(),
+			// 未认证源（只展示；解释 Windows 黄叹号误报）：从通道读数派生——
+			// 2026-11-20 起通道观察是唯一探测路径（旧旁路观察已删，避免同一
+			// 张卡被探两次、两处规矩漂移）。契约字段保留：旧客户端零影响。
+			UnauthSources: unauthChannelIPs(d.ChannelViews()),
 			// 多通道认证态（2026-11-20 双通道 M1）：每张物理卡各自一份
 			// （门户按源 IP 记会话）。label 由内核词表给出。
 			Channels: d.ChannelViews(),

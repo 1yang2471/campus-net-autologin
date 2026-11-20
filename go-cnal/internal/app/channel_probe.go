@@ -90,3 +90,18 @@ func wireChannels(d *keeper.Daemon, p *plumbing, cfg daemonConfig) {
 	d.Channels.Enumerate = func() []keeper.ChannelView { return p.channelViews() }
 	d.Channels.Probe = func(v keeper.ChannelView) string { return p.channelProbe(v, cfg) }
 }
+
+// unauthChannelIPs 从通道读数派生「已连接但未认证」的源 IP 列表。
+//
+// 数据源唯一（2026-11-20 tidy）：旧的旁路观察路径已删——它与通道观察探的是
+// 同一批卡，两套探测 = 同一张卡被探两次 + 两处「60s 一探」的规矩。
+// API 字段名保留（unauth_sources），旧客户端零影响。
+func unauthChannelIPs(views []keeper.ChannelView) []string {
+	var out []string
+	for _, v := range views {
+		if v.State == keeper.ChannelUnauth {
+			out = append(out, v.IP)
+		}
+	}
+	return out
+}
