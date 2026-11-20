@@ -60,6 +60,11 @@ func (d *Daemon) updateFluxView(data map[string]string, now time.Time) {
 	}
 }
 
+// InvalidateFlux 作废流量视图缓存（切账号后调用：旧账号的读数不得显示在
+// 新账号名下——2026-11-20 用户报告「今日流量与流量明细不一致」的根因）。
+// 跨 goroutine 安全：只置原子标志，清空动作在 Tick 的 pollFlux 里做。
+func (d *Daemon) InvalidateFlux() { d.fluxReset.Store(true) }
+
 // pollFlux 低频查流量供面板常驻显示。与会话探针共用读数：本轮若已有 flux
 // 数据（probeSession 在 flux 回落路径下刚查过），直接复用，不再触网。
 func (d *Daemon) pollFlux() {
@@ -67,6 +72,14 @@ func (d *Daemon) pollFlux() {
 		return
 	}
 	now := d.Now()
+	// 切账号等外部请求作废缓存：清节流与视图，本拍立即重查新账号读数。
+	if d.fluxReset.Swap(false) {
+		d.fluxAt = time.Time{}
+		d.fluxQueriedAt = time.Time{}
+		d.mu.Lock()
+		d.fluxView = FluxUsageView{}
+		d.mu.Unlock()
+	}
 	if d.fluxQueriedAt.Equal(now) {
 		return // 本轮已由会话探针查过
 	}

@@ -92,6 +92,9 @@ func newAPI(cfg *daemonConfig, p *plumbing, d *keeper.Daemon) *api.Server {
 		view["server"] = cfg.Server
 		view["free_windows"] = d.FreeWindowsText() // 守护当前值，不是启动时的 cfg
 		view["auto_reconnect"] = strconv.FormatBool(d.AutoReconnectOn())
+		// multi_channel（2026-11-20）：漏了这个键时面板保存成功但回读拿不到，
+		// 勾选被清成未勾选——用户感知「点多通道自愈再保存一直失败」。
+		view["multi_channel"] = strconv.FormatBool(d.MultiChannelOn())
 		view["bind_ip"] = cfg.BindIP
 		return view
 	}
@@ -155,6 +158,9 @@ func newAPI(cfg *daemonConfig, p *plumbing, d *keeper.Daemon) *api.Server {
 		}
 		cfg.Username = user
 		RememberAccount(cfgPathCached, user, cfg.Server) // 历史账号置顶（失败不致命）
+		// 切账号成功：作废流量视图缓存（旧账号读数不得显示在新账号名下；
+		// 下一拍 Tick 立即重查——2026-11-20 用户报告「今日流量与明细不一致」）。
+		d.InvalidateFlux()
 		return msg, nil
 	}
 	// 面板设置校验（api /config POST 在任何写入之前调用）：免认证时段必须

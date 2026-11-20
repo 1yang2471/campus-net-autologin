@@ -113,6 +113,8 @@ func TestNewAPIWiresAllSeams(t *testing.T) {
 }
 
 // 面板 GET /config 的键集合：拆文件后 GetConfig 仍须给出全部常用键。
+// multi_channel 2026-11-20 补：漏了这个键，面板保存成功后回读拿不到它，
+// 勾选被清成未勾选——用户感知「点多通道自愈再保存一直失败」。
 func TestNewAPIGetConfigKeys(t *testing.T) {
 	cfg := defaultAdvancedConfig()
 	cfg.Server = "https://portal.example"
@@ -121,13 +123,17 @@ func TestNewAPIGetConfigKeys(t *testing.T) {
 	d := newDaemon(cfg, pl)
 	a := newAPI(&cfg, pl, d)
 	view := a.GetConfig()
-	for _, k := range []string{"username", "server", "free_windows", "auto_reconnect", "bind_ip", "login_form"} {
+	for _, k := range []string{"username", "server", "free_windows", "auto_reconnect", "bind_ip", "login_form",
+		"multi_channel", "interval", "probe_timeout"} {
 		if _, ok := view[k]; !ok {
 			t.Errorf("GetConfig 缺键 %s（面板回填会空白）", k)
 		}
 	}
 	if view["server"] != "https://portal.example" {
 		t.Errorf("server 应回显配置值，实际 %q", view["server"])
+	}
+	if view["multi_channel"] != "false" {
+		t.Errorf("multi_channel 默认应为 false，实际 %q", view["multi_channel"])
 	}
 }
 

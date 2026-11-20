@@ -186,6 +186,10 @@ type Daemon struct {
 	fluxQueriedAt    time.Time // 本轮任意来源拿到 flux 数据的时刻（复用，避免一拍两查）
 	fluxView         FluxUsageView
 	fluxWarner       *fluxWarner
+	// fluxReset 作废流量视图的跨 goroutine 请求（切账号后旧账号读数不得
+	// 继续显示）。真正的清空在 Tick 的 pollFlux 里做——fluxAt/fluxQueriedAt
+	// 仍只有 Tick 一个写者，避免数据竞争。
+	fluxReset atomic.Bool
 
 	sessMiss   int
 	freeStreak int
