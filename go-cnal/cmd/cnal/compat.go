@@ -11,7 +11,7 @@ import (
 	"cnal/internal/keeper"
 )
 
-// cnal compat：离线兼容性自检（Python compat_check.py 同款用法）。
+// cnal compat：离线兼容性自检（与守护吃同一份判定链）。
 // 默认喂登录响应样本看判定；--detect 喂登录页/抓包样本看协议族。
 // 全程不联网、不发凭据；异校词表从守护同款 ini 的 [response] 读。
 const compatUsage = `用法:

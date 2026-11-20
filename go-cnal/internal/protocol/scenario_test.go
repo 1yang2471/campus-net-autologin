@@ -46,8 +46,8 @@ func TestHandshakeReadsOffline(t *testing.T) {
 	}
 }
 
-// 跨实现裁判（Task 8）：与 Python scenario_runner.py 跑同一份语料——
-// 任一边方言改动，另一边必须变红。握手步判四态；登录步断"现场取值的
+// 场景语料裁判：testdata/scenarios 是协议行为的单一契约来源，Go 实现逐条回放——
+// 方言改动必须同步更新语料，否则这里变红。握手步判四态；登录步断"现场取值的
 // 表单必带握手步观察到的对端 ip"并与语料请求自洽。
 func TestScenarioCorpus(t *testing.T) {
 	sc := loadScenario(t, "../../testdata/scenarios/dual-stack-rebind.json")

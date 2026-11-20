@@ -5,15 +5,14 @@
 掉线后秒级自动补登录（典型 ≤4 秒；最坏 ≈ interval + (锚点数+1)×探测超时 + 登录超时，默认配置约 18 秒），全程无感，彻底告别"填好账号密码还要手动点一次登录"。
 默认不绑定学校（门户地址由向导探测或手填），ac_portal 系异校差异改 `config.ini` 即用，附离线兼容性自检工具。
 
-## 本仓库包含三版实现
+## 本仓库结构
 
 | 目录 | 版本 | 平台 | 说明 |
 |---|---|---|---|
-| 根目录 | Python v1.0.14 | Windows | 原始实现，托盘常驻。`python tests_tdd.py` 跑测试 |
-| [`go-cnal/`](go-cnal/) | Go v2.2.0-go | Windows | Python 版的 Go 重写，同一内核跑托盘/无头/Android 三种壳。`go test ./...` 跑测试 |
+| [`go-cnal/`](go-cnal/) | Go v2.2.0-go | Windows | 主实现：同一内核跑托盘/无头/Android 三种壳。`go test ./...` 跑测试 |
 | [`go-cnal-android/`](go-cnal-android/) | Kotlin M1 | Android | Go 内核的 Android 壳（AAR + 前台服务）。`./gradlew :app:testDebugUnitTest` 跑测试 |
 
-三版共用同一套守护语义，但各自独立发布。Go 版与 Android 版只在本校（ac_portal 族）验证过，异校未实测。
+Go 版与 Android 版只在本校（ac_portal 族）验证过，异校未实测。
 各目录有自己的 `README.md` 与 `AGENTS.md`，进去看对应说明。
 
 > 🇬 [English quick start](#english)
@@ -92,21 +91,15 @@ L2 受限窗口期（网页打不开但认证正常）**会直接显示在面板
 
 ## 快速开始
 
-要求：Python 3.10+，Windows 10/11（本产品按 Windows 实测开发；代码里的
-Linux 分支仅为兜底保留，未做支持承诺）。
+要求：Windows 10/11（本产品按 Windows 实测开发；代码里的 Linux 分支仅为兜底保留，未做支持承诺）。
 
-```bash
-pip install -r requirements.txt
-python app_main.py        # 首次运行引导填账号，生成 config.ini
-```
+1. 解压 zip 到任意目录；
+2. `powershell -ExecutionPolicy Bypass -File scripts\install.ps1`（用户级，不需管理员）；
+3. 首次运行 `cnalw.exe` 会自动探测门户、生成最小配置并打开设置面板收集账号密码。
 
 托盘图标：🟢 在线（掉线后秒级恢复期间维持绿）/ 🟠 认证服务器不可达 / 🔴 登录被拒（额度/密码）/ ⚪ 启动中或离线兜底。
 右键菜单：**立即检测重连 / 打开面板 / 查流量 / 打开认证页 / 查看日志 / 开机自启 / 退出**。
 "开机自启"勾选即用（写当前用户注册表 Run 键，无需管理员；取消勾选即移除）。
-
-**杀毒/SmartScreen 提示**：主分发为纯源码（`python app_main.py`），一般不触发；
-仓库另附 `build_exe.py` 可选出包（onedir 非 onefile 降低误报），未签名 exe 首次
-运行可能弹 SmartScreen"已保护你的电脑"——点"更多信息 → 仍要运行"即可，只第一次。
 
 ## 配置说明（config.ini）
 
@@ -155,7 +148,7 @@ user_agent = Mozilla/5.0 ...         # 部分门户校验 UA
 
 [response]
 # 异校响应词表（可选，逗号分隔）。默认覆盖参考校实测形态；
-# 只换词典、判定结构不变。改完用 compat_check.py 验证，详见「异校适配」。
+# 只换词典、判定结构不变。改完用 cnal compat 验证，详见「异校适配」。
 # success_marks = 成功,登录成功,login_ok
 # negative_marks = 未成功,不成功,失败,错误,error,fail
 # transient_marks = noauth,not taken,请求异常,空响应,timeout,timed out,无法判定
@@ -187,7 +180,7 @@ keeper.lock 都在这，与源码/exe 共用同一份）。改完 config.ini 需
 异校第一步，用协议指纹离线判定（0 凭据、不联网）：
 
 ```bash
-python compat_check.py --detect <登录页样本>      # 文本或 --file page.html
+cnal compat --detect <登录页样本>      # 文本或 --file page.html
 ```
 
 输出三态结论：**适用**（朴素 ac_portal）/ **变体暂不支持**（auth_tag/密码
@@ -202,7 +195,7 @@ python compat_check.py --detect <登录页样本>      # 文本或 --file page.h
 
 ### 异校适配清单（先用 --detect 判族，再按需逐项）
 
-0. **协议指纹**：`python compat_check.py --detect <登录页样本>`——不是朴素
+0. **协议指纹**：`cnal compat --detect <登录页样本>`——不是朴素
    ac_portal 就此打住，别浪费时间改配置。
 1. **门户地址**：`server` 填你校认证地址，或用向导自动探测。
 2. **端点**：`login_path` / `flux_path` / `probe_path` 若与默认不同，逐项改。
@@ -213,8 +206,8 @@ python compat_check.py --detect <登录页样本>      # 文本或 --file page.h
    用（系统 DNS 回退），填对则物理栈下解析更快更准。锚点 `probe_ips` 可按需换。
 5. **响应判定**：抓一次登录响应文本（浏览器 F12 / 抓包），用离线自检验证：
    ```bash
-   python compat_check.py "把登录响应文本粘在这里"
-   python compat_check.py --file response.txt
+   cnal compat "把登录响应文本粘在这里"
+   cnal compat --file response.txt
    ```
    输出会告诉你会被判成「成功 / 拒绝 / 瞬态」以及命中哪条规则。**不联网、
    不发凭据**，可放心在校外先验证。判定与实际不符时，在 `[response]` 段
@@ -236,7 +229,7 @@ python compat_check.py --detect <登录页样本>      # 文本或 --file page.h
 | 参考校 | portal.example.edu | compatible | ✅ 长期日用 | 作者实测 |
 | （等你的报告） | | | | |
 
-> `tests_tdd.py` 循环26 的模拟门户回归（三方言端到端 + 变体诚实失败）证明的是
+> `go-cnal` 的模拟门户回归（三方言端到端 + 变体诚实失败）证明的是
 > 机制级通用性；某校真实可用与否以本表为准。
 
 ## 代理与加速器共存
@@ -254,57 +247,7 @@ keeper 自身与代理软件**正交**（探测/登录走物理栈，见上）�
 
 ## 常见问题
 
-**Q：为什么是"3 秒"这么激进？**
-A：TCP 重传机制下，3~6 秒窗口内大部分在途连接能靠重传存活；加速器心跳（5~15 秒）
-吃不掉 3 秒窗口。interval 钳制 1~300 秒防呆。掉线态每周期逐锚点探测（默认 2 个）
-+ 门户确认；登录尝试独立节流（被拒退避 + 连续 3 次熔断），不轰炸门户。
-
-**Q：莫名被踢？**
-A：学校限 4 个 MAC 地址绑定，去认证页自助服务解绑闲置设备；手机关随机 MAC。
-
-**Q：登录被拒（额度/余额类错误）后一直红点？**
-A：设计行为——退避 10 分钟避免空转；买好流量包后在托盘点"立即检测重连"。
-
-**Q：托盘显示在线，但很多网站打不开？**
-A：多半是 L2 出口策略风控（见四层闸机），不是认证掉了。日志会有 L2 告警。
-等 10~30 分钟窗口过期，**期间勿反复注销重登**（会延长风控）。
-
-**Q：托盘绿着，但 IPv6 网站/双栈应用不通？**
-A：分两半说。**登录补绑这一半已修**（v1.0.13）：门户的登录是双栈协议，登录请求带
-`ipv4or6=<你在这另一栈的地址>` 时一次认证同时绑定 v4 与 v6——浏览器登录前会先向
-**对端栈入口**发一次无凭据查询拿这个地址（v4 页面问 v6 侧、v6 页面问 v4 侧），
-门户前端注释原文「ipv4,ipv6一次认证」。守护在 `dual_stack = true` 且
-`v6_peer`/`peer_opr` 已配时，重登前现场握手对端并携带该字段；**两键留空（默认）
-= 不携带 = 纯 v4 提交**。参考校实测：补绑后 v6 `isOnline` 立刻转真，且此后守护的
-普通重登**不会把它冲掉**（会一直活着，直到下一次完整会话重建）。
-
-**异校用户**：`v6_peer`（对端栈入口裸 v6 字面量）与 `peer_opr`（对端握手操作名）
-都是校事实，从你校门户登录页引用的 JS 里能找到（汕大实测 `ipv4or6online`）——
-本版需手工查明填入，暂无自动提取。
-
-**v6 读数这一半仍未修**：面板每 60 秒读一次 v6，**当前实现不绑物理源**，TUN 代理
-在跑时读的是隧道出口而非校园出口，此时「IPv6 可达」三个字不可信（Go 版已按
-「四态观察 + 绑源」修复，Python 侧待跟进；改后选不出校园源会报"不可观测"）。
-另：工具不改任何系统 v6 配置（原则：不碰系统设置）。
-
-**Q：不在校园网 / 门户连不上，能先把账号配好吗？**
-A：能。首配向导点「保存并立即测试」若联网测试失败，会问「仍要保存凭据吗」——
-选「是」即落地，联网后由常驻守护自动重试登录。测试走后台线程，窗口不会卡住。
-
-**Q：只想改服务器/账号，不想重输密码？**
-A：密码框留空即可——表示「不改已存密码」，不会覆盖也不会清空。测试凭据时
-也会自动用已存密码。面板「保存设置」只更新你改的键，不会回滚手工编辑的
-config.ini，也不会把凭据管理器里的密码明文写回 ini。
-
-**Q：改了配置怎么不生效？**
-A：面板"网络设置/高级设置"里改并点"保存设置"——**立即生效**；
-直接编辑 config.ini 的仍需退出托盘重开（文件只在启动时读取）。
-「绑定网卡 IP」只接受合法 IPv4（留空=自动发现）：本版守护的登录与探测链路目前
-只走 v4，v6 侧的源发现与绑源探测随双栈修复一并提供，所以现在填 IPv6 会被拦下。
-
-**Q：手机端？**
-A：v1 仅电脑。安卓思路：MacroDroid/Tasker 在"连上校园网 WiFi"触发器里重放登录
-POST（抓包一次即可）；iOS 快捷指令无法在连 WiFi 时自动触发，只能手动点。
+见 [docs/faq.md](docs/faq.md)（3 秒节流、被踢、IPv6、改配置、手机端等）。
 
 ## 安全说明
 
@@ -329,8 +272,9 @@ egress DPI policy windows without interfering. Passwords live in the Windows
 Credential Manager. Tray app with autostart toggle.
 
 ```bash
-pip install -r requirements.txt
-python app_main.py   # interactive first run, writes config.ini
+# Extract the zip, then:
+powershell -ExecutionPolicy Bypass -File scripts\install.ps1
+# First run of cnalw.exe auto-detects the portal and opens the settings panel.
 ```
 
 MIT License. Chinese documentation above is authoritative.

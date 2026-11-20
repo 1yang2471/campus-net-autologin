@@ -4,7 +4,7 @@ about: 报告你学校的适用性判定（零凭据、可公开，帮助更新 
 labels: compatibility
 ---
 
-<!-- 请勿粘贴真实账号/密码。--detect 与 compat_check 均为离线、零凭据设计。 -->
+<!-- 请勿粘贴真实账号/密码。--detect 与响应判定均为离线、零凭据设计。 -->
 
 ## 环境
 
@@ -19,7 +19,7 @@ labels: compatibility
 ## 1. 协议指纹（先判族，不联网）
 
 ```bash
-python compat_check.py --detect "<登录页 HTML 或登录 POST 抓包片段>"
+cnal compat --detect "<登录页 HTML 或登录 POST 抓包片段>"
 ```
 
 输出（粘贴完整）：
@@ -32,13 +32,13 @@ python compat_check.py --detect "<登录页 HTML 或登录 POST 抓包片段>"
 
 ```bash
 登录后马上抓一次登录响应文本，再跑：
-python compat_check.py "<登录响应文本>"
+cnal compat "<登录响应文本>"
 ```
 
 输出（粘贴完整）：
 
 ```
-（粘贴 compat_check 输出）
+（粘贴 cnal compat 输出）
 ```
 
 ## 3. 结果

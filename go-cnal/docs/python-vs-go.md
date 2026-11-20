@@ -1,5 +1,9 @@
 # Python 版 vs Go 版：功能、性能、资源、通用性对比
 
+> **历史档案（2026-11-08 对比记录）**：Python 版已于 2026-11-20 退役，本页仅作
+> 技术演进记录保留；文中提到的 `keeper.py`/`tests_tdd.py`/`compat_check.py`
+> 等文件已从仓库删除。
+>
 > 2026-11-08。Python 版 `campus-net-autologin` v1.0.14（dist 打包）；
 > Go 版 `go-cnal` HEAD `58aa73e`。同一台机器、同一份
 > `%LOCALAPPDATA%\campus-net-autologin\config.ini`、同一账号、会话在线；
