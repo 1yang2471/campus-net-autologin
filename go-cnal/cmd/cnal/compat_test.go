@@ -9,7 +9,7 @@ import (
 	"cnal/internal/keeper"
 )
 
-// cnal compat：离线自检的 CLI 契约（Python compat_check.py 同款用法）。
+// cnal compat：离线自检的 CLI 契约（与守护吃同一份判定链）。
 // 测试针对可测的渲染/文件读取缝，不依赖真门户、不触网。
 
 func TestCompatReportResponseSuccess(t *testing.T) {
