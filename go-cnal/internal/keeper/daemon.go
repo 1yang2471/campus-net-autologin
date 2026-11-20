@@ -103,6 +103,9 @@ type Daemon struct {
 	// 只回调一次，带档位与用量视图。壳层据此发托盘气泡/安卓通知；内核不弹窗、
 	// 不改自动连、不断网。nil = 不发。
 	OnFluxWarn func(level string, view FluxUsageView)
+	// Channels 多通道观察器（2026-11-20 双通道方案 M1）：nil = 不观察。
+	// 只观察、零凭据——通道级登录是 M2，且默认关（spec §8.2）。
+	Channels *ChannelGuard
 
 	// 对外暴露的展示字段：Tick goroutine 写，回路 API Snapshot / 托盘 tick
 	// goroutine 读——用 mu 护住（2026-11-08 发布审查 P0：只有 autoReconnect
@@ -220,6 +223,9 @@ func (d *Daemon) Tick() {
 	d.probeL2()
 	d.probeUserPath()
 	d.probeSiblings()
+	// 多通道观察同样脱离判定：它是「别的卡是什么状态」的事实，与主链路
+	// 在线与否无关；探测异步跑，不拖心跳（见 channel.go）。
+	d.Channels.tick()
 	l1 := d.ProbeOnline()
 	if l1 {
 		d.offlineStreak = 0
@@ -355,4 +361,12 @@ func (d *Daemon) StateForUI() string {
 	d.mu.RLock()
 	defer d.mu.RUnlock()
 	return d.State
+}
+
+// ChannelViews 多通道观察读数（面板/回路快照用）。未接线观察器时返回空。
+func (d *Daemon) ChannelViews() []ChannelView {
+	if d.Channels == nil {
+		return nil
+	}
+	return d.Channels.Views()
 }

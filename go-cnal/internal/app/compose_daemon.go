@@ -100,6 +100,9 @@ func newDaemon(cfg daemonConfig, p *plumbing) *keeper.Daemon {
 		return "ok"
 	}
 	d.FetchFlux = func() (map[string]string, error) { return p.fluxQuery(cfg) }
+	// 多通道观察（2026-11-20 双通道 M1）：只观察、零凭据——每张物理卡各自
+	// 一份认证态（门户按源 IP 记会话）。当前绑定源不在其列（主链路已在判）。
+	wireChannels(d, p, cfg)
 	// 会话级存活探针（2026-11-11 实证：userflux 是账号级读数，会话释放后仍有
 	// 数据 → 只靠 flux 判不出「会话没了」，守护不会自动重登）。
 	// 走与登录同一个门户入口的 online_check（按请求源地址认栈、构造上无凭据），

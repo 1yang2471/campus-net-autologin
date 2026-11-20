@@ -40,6 +40,9 @@ func newAPI(cfg *daemonConfig, p *plumbing, d *keeper.Daemon) *api.Server {
 			Action:      h.Action,
 			// 旁路网卡未认证观察（只展示；解释 Windows 黄叹号误报）。
 			UnauthSources: d.UnauthSiblings(),
+			// 多通道认证态（2026-11-20 双通道 M1）：每张物理卡各自一份
+			// （门户按源 IP 记会话）。label 由内核词表给出。
+			Channels: d.ChannelViews(),
 			Extra: map[string]bool{"session_dead": sessionDead, "free_mode": freeMode,
 				"auto_reconnect": d.AutoReconnectOn()},
 		}

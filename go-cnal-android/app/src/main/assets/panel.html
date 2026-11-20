@@ -161,6 +161,7 @@
       <div class="kv"><dt>IPv4 源</dt><dd id="v4">—</dd></div>
       <div class="kv"><dt>IPv6 源</dt><dd id="v6">—</dd></div>
       <div class="kv"><dt>其他网卡</dt><dd id="nics">—</dd></div>
+      <div class="kv"><dt>通道</dt><dd id="channels">—</dd></div>
       <div class="kv"><dt>门户路径</dt><dd id="route">—</dd></div>
       <div class="kv"><dt>会话探针</dt><dd id="sess">—</dd></div>
       <div class="kv"><dt>免会话检测</dt><dd id="free">—</dd></div>
@@ -297,6 +298,7 @@ async function refresh() {
     document.getElementById("v4").textContent = s.v4_src || "未绑定";
     document.getElementById("v6").textContent = s.v6_src || "无 IPv6 源";
     renderNics(s.unauth_sources);
+    renderChannels(s.channels, s.unauth_sources);
     document.getElementById("route").textContent = s.route || "尚未选路";
     document.getElementById("sess").textContent = s.extra && s.extra.session_dead ? "已判死（重连中）" : "正常";
     document.getElementById("free").textContent = s.extra && s.extra.free_mode ? "已进入（自动检测）" : "未触发";
@@ -323,6 +325,23 @@ function renderNics(list) {
   el.textContent = ips.length
     ? ips.join("、") + "（已连接未认证；Windows 可能误报无 Internet）"
     : "—";
+}
+
+// 通道（2026-11-20 双通道 M1）：门户按源 IP 记会话，每张物理卡各自一份
+// 认证态。逐条显示「哪张卡 + 什么态」——只列 IP 用户认不出是哪张卡。
+// 旧内核没有 channels 字段时，回落到 unauth_sources 的旧说法，不留空。
+function renderChannels(list, fallback) {
+  const el = document.getElementById("channels");
+  if (!el) return;
+  const chans = Array.isArray(list) ? list : [];
+  if (chans.length) {
+    el.textContent = chans
+      .map(c => (c.iface || "") + " " + (c.ip || "") + "（" + (c.label || c.state || "未知") + "）")
+      .join("、");
+    return;
+  }
+  const ips = Array.isArray(fallback) ? fallback.filter(x => typeof x === "string" && x) : [];
+  el.textContent = ips.length ? ips.join("、") + "（已连接未认证）" : "—";
 }
 
 // 双读数（2026-11-18）：认证（物理栈）+ 用户路径（系统栈）+ 原因一句话。
