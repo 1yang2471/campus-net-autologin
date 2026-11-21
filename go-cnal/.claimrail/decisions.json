@@ -1,13 +1,37 @@
 {
   "schema": 1,
-  "task_class": "api-design",
+  "task_class": "docs-new",
   "forks": [
     {
-      "id": "legacy-android-memory-summary",
-      "title": "安卓会话 15 条 memory 证据汇总处置（2026-11-21 用户知悉放行）",
-      "grade": "waived-by-user",
-      "evidence": "memory-unavailable: 本机无 memory log，15 条 log#14~32 不可回验；2026-11-21 用户裁决知悉放行，原文见 git 历史本条目的前版本",
-      "waived_at": "2026-11-21"
+      "fork": "M0 测量锚点 connect.rom.miui.com 的白名单效度面：照 Windows 刀 1 变体序改造还是文档化边界（2026-11-21 移植复盘）",
+      "options": [
+        {
+          "label": "改造 M0 探针：裸 IP 对照变体 + 判定口径重定义",
+          "target": {
+            "file": "go-cnal-android/app/src/main/java/dev/cnal/m0/ProbeRunner.kt"
+          }
+        },
+        {
+          "label": "文档化边界：404→OFFLINE 保守判定在参考校 404 形态下读对，A1-A5 判据口径不动",
+          "target": {
+            "file": "go-cnal-android/docs/2026-11-21-windows-fixes-android-port.md"
+          }
+        }
+      ],
+      "picked": "文档化边界：404→OFFLINE 保守判定在参考校 404 形态下读对，A1-A5 判据口径不动",
+      "evidence": {
+        "kind": "repo",
+        "ref": "go-cnal-android/app/src/main/java/dev/cnal/m0/ProbeLogic.kt:25",
+        "asserts": [
+          "else -> ProbeVerdict.OFFLINE"
+        ]
+      },
+      "target": {
+        "file": "go-cnal-android/docs/2026-11-21-windows-fixes-android-port.md",
+        "symbol": "M0 锚点白名单边界"
+      },
+      "cost_if_wrong": "high",
+      "verified": true
     },
     {
       "fork": "运行态快照被 git 跟踪，Stop 钩子自写快照即改 treeHash，stale 永久自指误拦（.gitignore 明写只留本机）",
@@ -28,7 +52,7 @@
       "picked": "按 .gitignore 约定退出跟踪（git rm --cached），快照与记忆 log 只留本机",
       "evidence": {
         "kind": "repo",
-        "ref": ".gitignore:14-15",
+        "ref": "go-cnal/.gitignore:14",
         "asserts": [
           "只在本机，不进 git"
         ]
