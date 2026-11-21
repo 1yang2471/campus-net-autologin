@@ -69,3 +69,7 @@ func (m ResponseMarks) successMarked(s string) bool   { return marked(m.Success,
 func (m ResponseMarks) negativeMarked(s string) bool  { return marked(m.Negative, s) }
 func (m ResponseMarks) transientMarked(s string) bool { return marked(m.Transient, s) }
 func (m ResponseMarks) freezeMarked(s string) bool    { return marked(m.Freeze, s) }
+
+// SetResponseMarks 覆盖响应词表（[response] 配置面；只在 Tick 启动前调用）。
+// 2026-11-21 从 daemon.go 拆到词表的归属地（守 2 万字节提交闸）。
+func (d *Daemon) SetResponseMarks(m ResponseMarks) { d.marks = m.withDefaults() }

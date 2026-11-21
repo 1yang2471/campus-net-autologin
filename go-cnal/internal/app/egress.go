@@ -107,6 +107,13 @@ func classifyL1Err(err error) (kind, detail string) {
 // probeAnchor 对给定客户端跑一遍公网锚点（物理栈/系统栈共用同一套判定）：
 // 204/非劫持页 = 通；302/200 型门户页/连接失败 = 不通，并带原因。
 // 物理栈客户端由调用方负责绑源；系统栈客户端跟浏览器同路。
+//
+// Host 变体序与 detect.go probeHostVariants 同语义（2026-11-21 实测事故）：
+// 先不带 Host——校园把 connect.rom.miui.com 这类探测域名白名单放行，带
+// Host 的未认证请求拿真 404/204，旧实现由此假绿 3.5 小时不重登。无 Host
+// （按目标 IP）绕开按域名放行的白名单；配置 Host 只作第二变体（给按域名
+// 劫持的校园留路）。任一变体看到劫持即判红——白名单只救得了「能通」，
+// 救不回「本来就不通」。
 func probeAnchor(c *netstack.Client, cfg daemonConfig) l1Outcome {
 	if c == nil {
 		return l1Outcome{Kind: l1AnchorDown, Detail: "探针未接线"}
@@ -120,23 +127,37 @@ func probeAnchor(c *netstack.Client, cfg daemonConfig) l1Outcome {
 		last = o
 	}
 	for _, ip := range cfg.ProbeIPs {
-		st, body, err := c.GetStatus("http://"+ip+cfg.ProbePath,
-			map[string]string{"Host": cfg.ProbeHost})
-		if err != nil {
-			kind, detail := classifyL1Err(err)
-			note(l1Outcome{Kind: kind, Detail: detail})
-			continue // status 0：被劫持或不可达，试下一锚点
+		for _, host := range probeHostVariants(cfg.ProbeHost) {
+			hdrs := map[string]string{}
+			label := ip
+			if host != "" {
+				hdrs["Host"] = host
+				label = ip + " Host=" + host
+			}
+			st, body, err := c.GetStatus("http://"+ip+cfg.ProbePath, hdrs)
+			if err != nil {
+				kind, detail := classifyL1Err(err)
+				note(l1Outcome{Kind: kind, Detail: detail})
+				// err（RST/丢包/超时）后不再问带 Host 的第二变体（trouble-maker
+				// P1-4）：白名单形态拿 404 会把红覆盖成假绿——「劫持终局」只封住了
+				// 302 形态，err 形态的白名单残余洞必须一并关死；同步缝的拍长也不
+				// 得翻倍（3 锚点最坏 3→6 次，重蹈 11-19 同步探测拖心跳）。
+				break
+			}
+			if isRedirect(st) {
+				note(l1Outcome{Kind: l1Hijacked, Detail: fmt.Sprintf("%s 返回 %d（劫持跳转）", label, st)})
+				// 本 IP 已见劫持即终局：不再问第二变体——白名单的「第二意见」
+				// 只救得了「本来能通」，救不回「本来就不通」（2026-11-21 实测：
+				// 劫持后继续问白名单 Host，404 把红覆盖成假绿）。跨 IP 仍试，
+				// 单锚点被墙不该连坐其它锚点。
+				break
+			}
+			if st == 200 && containsAny(body, cfg.HijackMarks) {
+				note(l1Outcome{Kind: l1Hijacked, Detail: fmt.Sprintf("%s 返回 200 型门户劫持页", label)})
+				break // 同上：劫持终局，不问第二变体
+			}
+			return l1Outcome{OK: true}
 		}
-		switch st {
-		case 301, 302, 307, 308:
-			note(l1Outcome{Kind: l1Hijacked, Detail: fmt.Sprintf("%s 返回 %d（劫持跳转）", ip, st)})
-			continue // 劫持跳转
-		}
-		if st == 200 && containsAny(body, cfg.HijackMarks) {
-			note(l1Outcome{Kind: l1Hijacked, Detail: fmt.Sprintf("%s 返回 200 型门户劫持页", ip)})
-			continue // 200 型门户劫持页（JS 挑战）不是真实互联网
-		}
-		return l1Outcome{OK: true}
 	}
 	return last
 }

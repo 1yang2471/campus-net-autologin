@@ -183,3 +183,73 @@ func TestProbeAnchorClassifies(t *testing.T) {
 		t.Fatalf("未接线应报不通且带原因，实际 %+v", out)
 	}
 }
+
+// 行为（2026-11-21 实测事故）：锚点探测不得被探测域名白名单骗绿。校园把
+// connect.rom.miui.com 放行（detect.go probeHostVariants 2026-11-11 实测），
+// 带该 Host 的未认证请求拿到真 404，probeAnchor 旧实现把它判「在线」——
+// 免认证窗口结束后会话未恢复时守护 3.5 小时假绿、一次重登都没发。
+// 修正语义与 detect.go 对齐：先不带 Host（按 IP 放行的白名单骗不到），
+// 未认证看到 302 劫持判红；配置 Host 只作第二变体。
+func TestProbeAnchorNotFooledByWhitelistedHost(t *testing.T) {
+	var hostSeq []string // 服务端按序收到的 Host 头
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hostSeq = append(hostSeq, r.Host)
+		if r.Host == "connect.rom.miui.com" {
+			// 白名单放行：未认证也拿真实 404（旧实现由此判绿）
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		// 无 Host（Host=目标 IP）：未认证的正常形态是 302 劫持
+		http.Redirect(w, r, "https://portal.example/", http.StatusFound)
+	}))
+	defer srv.Close()
+
+	c := netstack.NewSystem(time.Second)
+	base := daemonConfig{
+		ProbeIPs:  []string{strings.TrimPrefix(srv.URL, "http://")},
+		ProbePath: "/generate_204",
+		ProbeHost: "connect.rom.miui.com",
+	}
+	out := probeAnchor(c, base)
+	if out.OK {
+		t.Fatalf("未认证（无 Host 时 302 劫持）不得因白名单 404 判绿，实际 %+v（Host 序列 %v）", out, hostSeq)
+	}
+	if out.Kind != l1Hijacked {
+		t.Fatalf("期望按劫持判红，实际 %+v", out)
+	}
+	if len(hostSeq) == 0 || strings.Contains(hostSeq[0], "connect.rom.miui.com") {
+		t.Fatalf("第一变体必须不带 Host（先看真实形态），实际 Host 序列 %v", hostSeq)
+	}
+}
+
+// 行为（trouble-maker P1-4）：无 Host 变体 err（RST/丢包/超时）后不得再问
+// 带 Host 的第二变体——白名单形态的 404 会把红覆盖成假绿（「劫持终局」封的
+// 是 302 形态，err 形态必须一并关死），同步缝的拍长也不得翻倍。
+func TestProbeAnchorErrSkipsHostVariant(t *testing.T) {
+	var hostSeq []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hostSeq = append(hostSeq, r.Host)
+		if r.Host == "connect.rom.miui.com" {
+			w.WriteHeader(http.StatusNotFound) // 白名单 404：不得成为 err 后的翻盘证据
+			return
+		}
+		time.Sleep(1500 * time.Millisecond) // 无 Host 变体：挂起超过 1s 超时 → err
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer srv.Close()
+
+	c := netstack.NewSystem(time.Second)
+	base := daemonConfig{
+		ProbeIPs:    []string{strings.TrimPrefix(srv.URL, "http://")},
+		ProbePath:   "/generate_204",
+		ProbeHost:   "connect.rom.miui.com",
+		ProbeTimeout: time.Second,
+	}
+	out := probeAnchor(c, base)
+	if out.OK {
+		t.Fatalf("无 Host 超时后白名单 404 不得翻盘判绿（Host 序列 %v）", hostSeq)
+	}
+	if len(hostSeq) != 1 || strings.Contains(hostSeq[0], "connect.rom.miui.com") {
+		t.Fatalf("err 后不得再发第二变体请求，实际 Host 序列 %v", hostSeq)
+	}
+}

@@ -66,6 +66,43 @@ func TestFreeWindowEndRechecksSessionImmediately(t *testing.T) {
 	}
 }
 
+// 行为（2026-11-21 产品优化决议 D）：免认证窗口结束的边沿不仅作废主链路
+// 探针节流，也作废通道观察节流——窗口内门户不维护任何通道的会话，60s
+// 节流里的陈旧「已认证」读数在窗口结束后照样骗面板（与主链路 7fefe08
+// 同款事故面，只是观察不触发动作）。边沿后首拍立即重探通道。
+func TestFreeWindowEndForcesChannelReprobe(t *testing.T) {
+	clk := time.Date(2026, 11, 20, 6, 30, 40, 0, time.Local)
+	minute := 390 // 06:30 窗口内
+	alive := true
+	var sessCalls, logins int
+	d := newFreeWindowEdgeDaemon(&clk, &minute, &alive, &sessCalls, &logins)
+	probes := 0
+	g := NewChannelGuard()
+	g.Now = func() time.Time { return clk }
+	g.Enumerate = func() []ChannelView {
+		return []ChannelView{{ID: "WLAN 2|172.29.153.208", Iface: "WLAN 2", IP: "172.29.153.208"}}
+	}
+	g.Probe = func(v ChannelView) string {
+		probes++
+		return ChannelAuthed
+	}
+	d.Channels = g
+
+	d.Tick() // 窗口内首拍：通道探测 #1，节流起点 06:30:40
+	if got := waitProbes(t, &probes, 1); got != 1 {
+		t.Fatalf("窗口内首拍应探一次，实际 %d", got)
+	}
+
+	// 窗口结束（06:31:01，距上次探测 21s < 60s 节流）：边沿作废通道节流，
+	// 首拍立即重探——陈旧读数最多只能活到边沿那一拍。
+	minute = 391 // 06:31 窗口外
+	clk = time.Date(2026, 11, 20, 6, 31, 1, 0, time.Local)
+	d.Tick()
+	if got := waitProbes(t, &probes, 2); got != 2 {
+		t.Fatalf("窗口结束边沿应立即重探通道（不等 60s 节流），实际探测 %d 次", got)
+	}
+}
+
 // 行为：窗口结束首拍会话活着 → 不登录（只核实，不误伤）。
 func TestFreeWindowEndAliveDoesNotLogin(t *testing.T) {
 	clk := time.Date(2026, 11, 20, 6, 30, 40, 0, time.Local)

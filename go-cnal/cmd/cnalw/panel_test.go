@@ -21,6 +21,22 @@ func TestPanelPageAssembles(t *testing.T) {
 	}
 }
 
+// 行为（2026-11-21 产品优化决议 C）：状态卡显示最近一次守护动作
+// 「N 分钟前·自动登录」（断网排查时第一眼知道守护动没动过）——状态卡
+// 要有承载行，脚本要从 /state 的 last_action/last_action_at 渲染。
+func TestPanelShowsLastAction(t *testing.T) {
+	page := panelPage()
+	for _, want := range []string{
+		`id="last-action"`,
+		"renderLastAction",
+		"last_action",
+	} {
+		if !strings.Contains(page, want) {
+			t.Errorf("面板页缺守护动作时间线: %s", want)
+		}
+	}
+}
+
 // 行为：面板显示「门户路径」（2026-11-11 设计 §4：走哪条路、为什么，用户一眼
 // 要能看出来）——诊断卡要有这一行，脚本要从 /state 的 route 字段填。
 func TestPanelShowsPortalRoute(t *testing.T) {

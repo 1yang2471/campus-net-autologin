@@ -10,8 +10,11 @@ func (d *Daemon) probeSession() {
 		return
 	}
 	now := d.Now()
-	if now.Before(d.fluxOffUntil) {
-		return // SESSION_FALSE 自停期内：探针闭嘴，不再产生假判死
+	// SESSION_FALSE 熔断只停 flux 回落（假判死的信号源），不得连坐 SessionAlive
+	// （2026-11-21 实测复盘：熔断把 IP 级真值一并停了 1 小时，会话真死无人报，
+	// 假绿窗口从此打开——免认证窗口结束 3.5h 假在线的成因链一环）。
+	if d.SessionAlive == nil && now.Before(d.fluxOffUntil) {
+		return
 	}
 	if !d.sessAt.IsZero() && now.Sub(d.sessAt) < sessionProbeInterval {
 		return // 60s 节流（同 l2At/v6At）：会话真值不是心跳
@@ -73,6 +76,16 @@ func (d *Daemon) probeUserPath() {
 	d.mu.Lock()
 	d.userPath = r
 	d.mu.Unlock()
+	// 红 streak 起点记账（Tick 同 goroutine 读写，同 l2Since 无锁）：
+	// 2026-11-21 决议 B——用户路径红持续 ≥5 分钟才上浮互证附注；转绿或
+	// 转未知都清零（未知期间的陈账不是「持续异常」的证据，红复来重新起算）。
+	if r.Known && !r.OK {
+		if d.userPathSince.IsZero() {
+			d.userPathSince = now
+		}
+	} else {
+		d.userPathSince = time.Time{} // 转绿/转未知即消，且不计时
+	}
 }
 
 // l1RedSessionInterval L1 红时会话核实的下限（不是心跳）：用户路径一断，
@@ -92,9 +105,8 @@ func (d *Daemon) probeSessionOnL1Red(now time.Time) (dead, known bool) {
 	if d.SessionAlive == nil {
 		return false, false
 	}
-	if now.Before(d.fluxOffUntil) {
-		return false, false
-	}
+	// fluxOffUntil 在此只可能连坐 SessionAlive（flux 走不到这条缝）——
+	// IP 级真值不受熔断停用（同 probeSession 的 2026-11-21 修正）。
 	if !d.sessRedAt.IsZero() && now.Sub(d.sessRedAt) < l1RedSessionInterval {
 		return !d.sessRedAlive, d.sessRedKnown
 	}
@@ -115,7 +127,7 @@ func (d *Daemon) invalidateSessionCache() {
 // 读数正常，用户路径/线路异常）。L2 观察作为附属信息，不抢主句。
 func (d *Daemon) sessionAliveL1RedDetail() string {
 	base := "认证在线（锚点异常，会话正常）"
-	if extra := d.onlineDetail(); extra != "" {
+	if extra := d.onlineDetail(false); extra != "" {
 		return base + "｜" + extra
 	}
 	return base
@@ -170,6 +182,13 @@ func (d *Daemon) probeL2() {
 	// 探测（含 TLS 握手，秒级）在锁外；只有赋值进锁——别让壳层的
 	// RLock 读被网络调用卡住几秒（2026-11-08 P0 并发纪律的写侧对称）。
 	restricted := d.ProbeL2() == "restricted"
+	if restricted {
+		if d.l2Since.IsZero() {
+			d.l2Since = now // 本轮受限起点（Tick 同 goroutine，无锁）
+		}
+	} else {
+		d.l2Since = time.Time{}
+	}
 	d.mu.Lock()
 	d.l2Restricted = restricted
 	if restricted {
@@ -188,14 +207,56 @@ func (d *Daemon) L2RestrictedOnUI() bool {
 	return d.l2Restricted || d.Now().Before(d.l2WindowUntil)
 }
 
-// onlineDetail 在线态详情：L2 受限优先（直接影响体验），v6 文案次之。
-// 只观察的两层都在这里上浮——只写日志用户看不见（2026-11-05 实测被误当失职）。
-func (d *Daemon) onlineDetail() string {
+// l2StreakThreshold L2 受限持续多久点名「持续」（可见性升级门槛）。
+const l2StreakThreshold = 10 * time.Minute
+
+// userPathStreakThreshold 用户路径异常持续多久才上浮互证附注（决议 B）：
+// 系统栈抖一拍就提示会成为噪音；这是互证信号不是判定，让用户知道
+//「守护说在线但浏览器可能上不了网」该找代理/TUN，而不是以为守护失职。
+const userPathStreakThreshold = 5 * time.Minute
+
+// onlineDetail 在线态详情：L2 受限优先（直接影响体验），用户路径互证附注
+// 次之，v6 文案殿后。只观察的两层都在这里上浮——只写日志用户看不见
+//（2026-11-05 实测被误当失职）。l1Green 为本拍锚点结论：互证附注只在
+// L1 绿时说「守护探测走物理栈不受影响」，锚点也红时那句话不成立。
+func (d *Daemon) onlineDetail(l1Green bool) string {
 	now := d.Now()
+	var base string
 	if d.l2Restricted || now.Before(d.l2WindowUntil) {
-		return "出口受限（观察：大众站 TLS 被重置；认证正常；勿反复重登）"
+		// 持续 ≥10min 点名（2026-11-21 实测复盘：出口受限连续 3.5 小时只
+		// 显示「观察中」，用户无从判断该不该动手）。只改可见性不改判定——
+		// 会话真值由 probeSession 独立核实，对抗 DPI 不违规。
+		if !d.l2Since.IsZero() && now.Sub(d.l2Since) >= l2StreakThreshold {
+			base = "出口受限持续较久（大众站 TLS 被重置≥10 分钟；认证正常；会话由 online_check 独立核实，勿反复重登）"
+		} else {
+			base = "出口受限（观察：大众站 TLS 被重置；认证正常；勿反复重登）"
+		}
+	} else {
+		base = d.v6Detail()
 	}
-	return d.v6Detail()
+	if extra := d.userPathDetail(now, l1Green); extra != "" {
+		if base == "" {
+			return extra
+		}
+		return base + "｜" + extra
+	}
+	return base
+}
+
+// userPathDetail 用户路径互证附注（2026-11-21 产品优化决议 B）：L1 绿
+//（在线态）而系统栈持续 ≥5 分钟不通时上浮。只做展示，绝不参与判定——
+// 转绿/转未知即消；读 userPath 走加锁读（Tick 写、壳层读的同款纪律）。
+func (d *Daemon) userPathDetail(now time.Time, l1Green bool) string {
+	if !l1Green {
+		return "" // 锚点也红：物理栈同样受影响，「不受影响」不成立
+	}
+	d.mu.RLock()
+	known, ok := d.userPath.Known, d.userPath.OK
+	d.mu.RUnlock()
+	if !known || ok || d.userPathSince.IsZero() || now.Sub(d.userPathSince) < userPathStreakThreshold {
+		return ""
+	}
+	return "用户路径异常（代理/TUN 接管？守护探测走物理栈不受影响）"
 }
 
 // probeV6 v6 四态观察，60s 一节流（每拍握手会刷爆日志并高频撞 DPI）。

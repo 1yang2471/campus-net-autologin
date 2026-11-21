@@ -2,6 +2,8 @@ package app
 
 import (
 	"net"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -109,6 +111,35 @@ func TestNewAPIWiresAllSeams(t *testing.T) {
 	}
 	if a.SaveConfig == nil {
 		t.Error("SaveConfig 缝未接")
+	}
+}
+
+// 行为（2026-11-21 产品优化决议 C）：守护动作时间线接线——Snapshot 闭包
+// 带上 keeper 的最近动作（kind + 时刻），面板据此渲染「N 分钟前·自动登录」。
+// 漏接的形态与 2026-11-07 漏填 Color 同类：编译过、单测过，只在真机上空白。
+func TestSnapshotCarriesLastAction(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte("<html>登录</html>"))
+	}))
+	t.Cleanup(srv.Close)
+	cfg := defaultAdvancedConfig()
+	cfg.Server = srv.URL
+	pl := &plumbing{
+		pt:        newPortalTarget(func() (net.IP, error) { return net.IPv4(127, 0, 0, 1), nil }, time.Minute),
+		portal:    netstack.New(net.IPv4(127, 0, 0, 1), 2*time.Second),
+		currentV6: func() net.IP { return nil },
+		action:    &keeper.LoginAction{},
+		rl:        keeper.NewRateLimit(8, time.Hour, 15*time.Minute, time.Now),
+	}
+	d := newDaemon(cfg, pl)
+	d.RecordAction("自动登录")
+	a := newAPI(&cfg, pl, d)
+	snap := a.Snapshot()
+	if snap.LastAction != "自动登录" {
+		t.Errorf("Snapshot 应带最近动作 kind，实际 %q", snap.LastAction)
+	}
+	if snap.LastActionAt.IsZero() {
+		t.Error("Snapshot 应带最近动作时刻（面板算「N 分钟前」用）")
 	}
 }
 

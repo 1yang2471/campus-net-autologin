@@ -52,6 +52,7 @@ async function refresh() {
     document.getElementById("label").textContent = label;
     document.getElementById("detail").textContent = s.detail || "";
     renderReadings(s);
+    renderLastAction(s);
     setGlyph(s.color, s.state);
     document.getElementById("v4").textContent = s.v4_src || "未绑定";
     document.getElementById("v6").textContent = s.v6_src || "无 IPv6 源";
@@ -107,6 +108,19 @@ function renderReadings(s) {
   if (path) parts.push(path);
   if (s.reason_label) parts.push(s.reason_label);
   el.textContent = parts.join("｜");
+}
+
+// 守护动作时间线（2026-11-21 决议 C）：最近一次守护动作「N 分钟前·自动登录」。
+// 断网排查时用户第一眼知道守护动没动过，不用翻日志反推；没有动作过整行留空。
+// N<1 分钟显示「刚刚」；时刻缺失（旧内核）只显示动作名，不编造时间。
+function renderLastAction(s) {
+  const el = document.getElementById("last-action");
+  if (!el) return;
+  if (!s.last_action) { el.textContent = ""; return; }
+  const at = s.last_action_at ? new Date(s.last_action_at) : null;
+  if (!at || isNaN(at)) { el.textContent = s.last_action; return; }
+  const mins = Math.floor((Date.now() - at.getTime()) / 60000);
+  el.textContent = (mins < 1 ? "刚刚" : mins + " 分钟前") + "·" + s.last_action;
 }
 
 // 今日流量：从 /state 的 flux 快照常驻渲染（内核 10 分钟低频轮询，不额外

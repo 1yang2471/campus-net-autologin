@@ -23,27 +23,26 @@ import (
 //
 // 参数校验（返回错误、不投递）：
 //   - channelSrc 非法 → 拒（凭据不许发往未知出口）；
-//   - portalIP 与 channelSrc 不是同一个绑定语义 → 拒（源与出口不符）。
+//   - portalIP 未知 → 拒。
 //
-// portalIP 为空表示「本次没有解析到门户 IP」——调用方负责先解析。
-func channelDeliver(p *plumbing, cfg daemonConfig, channelSrc, portalSrc net.IP, portalPort string) func(map[string]string) (string, error) {
+// 「解析源==通道源」不在投递端校验：它由 channelLogin 的 ResolveBound(src,
+// ...) 结构性保证（解析绑的就是通道源）。旧版把 portalIP 误当「解析源」与
+// channelSrc 全等校验——真机上门户 IP(1.1.1.2) 永远 ≠ 通道源(172.29.153.208)，
+// 通道登录 100% 恒拒（2026-11-21 M2-c 真机踢线实证：WiFi 掉线后通道无人自愈
+// 的根因；单测用同值 127.0.0.1 掩盖了它）。
+func channelDeliver(p *plumbing, cfg daemonConfig, channelSrc, portalIP net.IP, portalPort string) func(map[string]string) (string, error) {
 	return func(form map[string]string) (string, error) {
 		if channelSrc == nil || channelSrc.To4() == nil {
 			return "", errors.New("通道源地址非法：不投递凭据")
 		}
-		if portalSrc == nil || portalSrc.To4() == nil {
+		if portalIP == nil || portalIP.To4() == nil {
 			return "", errors.New("门户 IP 未知：不投递凭据")
-		}
-		if !portalSrc.Equal(channelSrc) {
-			// 门户 IP 是「从这个源解析出来的」，解析源与通道源必须一致——
-			// 不一致说明钉到了别的出口的解析结果，凭据会走错路。
-			return "", fmt.Errorf("门户解析源 %s 与通道源 %s 不符：不投递凭据", portalSrc, channelSrc)
 		}
 		client := netstack.New(channelSrc, cfg.LoginTimeout)
 		if !cfg.SSLVerify {
 			client = client.InsecureTLS()
 		}
-		pin := net.JoinHostPort(portalSrc.String(), portalPort)
+		pin := net.JoinHostPort(portalIP.String(), portalPort)
 		headers := map[string]string{
 			"Content-Type": "application/x-www-form-urlencoded",
 			"User-Agent":   cfg.UserAgent,

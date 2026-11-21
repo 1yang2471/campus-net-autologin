@@ -6,6 +6,29 @@ import (
 	"time"
 )
 
+// 行为（2026-11-21 实测复盘）：SESSION_FALSE 熔断只停 flux 回落（假判死的
+// 信号源），不得连坐 SessionAlive——IP 级真值停摆 1 小时，会话真死无人报，
+// 假绿窗口从此打开（免认证窗口结束 3.5h 假绿的成因链一环）。
+func TestFluxOffKeepsSessionAlive(t *testing.T) {
+	aliveCalls := 0
+	d := NewDaemon("")
+	clk := time.Unix(0, 0)
+	d.Now = func() time.Time { return clk }
+	d.ProbeOnline = func() bool { return true }
+	d.PortalAlive = func() bool { return true }
+	d.SessionAlive = func() (bool, error) { aliveCalls++; return false, nil }
+	d.FetchFlux = func() (map[string]string, error) { return map[string]string{}, nil }
+	d.fluxOffUntil = clk.Add(time.Hour) // 熔断期内
+	d.Tick()
+	if aliveCalls == 0 {
+		t.Fatal("熔断期内 SessionAlive 仍须核实——IP 级真值不受 flux 熔断连坐")
+	}
+	_, _, _, dead, _ := d.View()
+	if !dead {
+		t.Fatal("熔断期内 SessionAlive 报死应判死（假在线封堵接管）")
+	}
+}
+
 // L2 出口策略观察（移植 Python probe_l2_restricted 语义）：认证会话正常但
 // 大众站被出口 DPI RST（SNI 黑名单风控窗口，2026-11-04 实测约 15 分钟自愈）。
 // L1 对此失明（miui 锚点在白名单）。只观察、绝不自动"修复"——对抗 DPI 属违规；
@@ -139,5 +162,27 @@ func TestL2RestrictedNeverChangesDecisions(t *testing.T) {
 	}
 	if d.State != StateOnline {
 		t.Errorf("L2 受限时会话健康应保持在线，实际 %v/%v", d.State, d.Detail)
+	}
+}
+
+// 行为（2026-11-21 实测复盘）：L2 受限持续 ≥10 分钟时在线文案升级点名
+// 「持续」——今晨出口受限连续 3.5 小时只显示「观察中」，用户无从判断该不
+// 该动手。只改可见性，不改判定（对抗 DPI 不违规；会话真值由 probeSession
+// 独立核实）。短时受限（抖动/风控窗口，2026-11-04 实测约 15 分钟自愈）不标。
+func TestL2StreakShownAsPersistent(t *testing.T) {
+	clk := time.Unix(0, 0)
+	probe := 0
+	d := newL2Daemon(&clk, "restricted", &probe)
+	d.Tick() // 受限开始
+	if !strings.Contains(d.Detail, "出口受限") {
+		t.Fatalf("前置：受限应上浮 detail，实际 %q", d.Detail)
+	}
+	if strings.Contains(d.Detail, "持续") {
+		t.Fatalf("前置：短时受限不得标持续，实际 %q", d.Detail)
+	}
+	clk = clk.Add(11 * time.Minute) // 过 L2 节流，受限持续
+	d.Tick()
+	if !strings.Contains(d.Detail, "持续") {
+		t.Fatalf("受限 ≥10min 应点名持续（可见性升级），实际 %q", d.Detail)
 	}
 }

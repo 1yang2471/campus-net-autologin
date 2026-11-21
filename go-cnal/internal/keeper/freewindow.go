@@ -118,6 +118,9 @@ func (d *Daemon) recheckOnFreeWindowEnd(inFree bool) {
 	if d.wasFreeWindow && !inFree {
 		d.sessAt = time.Time{}
 		d.sessRedAt = time.Time{}
+		// 同一边沿也作废通道观察节流（2026-11-21 决议 D）：窗口内门户不
+		// 维护任何通道的会话，陈旧「已认证」读数会骗面板。nil 安全。
+		d.Channels.ForceProbe()
 	}
 	d.wasFreeWindow = inFree
 }

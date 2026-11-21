@@ -132,6 +132,13 @@ type Snapshot struct {
 	// Flux 流量用量只读视图（低频轮询缓存；面板刷 /state 顺带取，不再单独
 	// 打 /flux）。nil = 未接线/还没查过，omitempty 保证旧客户端零影响。
 	Flux *keeper.FluxUsageView `json:"flux,omitempty"`
+	// LastAction/LastActionAt 最近一次守护动作（2026-11-21 决议 C）：面板
+	// 状态卡显示「N 分钟前·自动登录」——断网排查时用户第一眼知道守护
+	// 动没动过。kind 空 = 进程内还没动作过（旧客户端零影响）。注意
+	// last_action_at 是值类型：omitempty 对 time.Time 不生效，零值时刻
+	// 恒序列化——旧客户端按 last_action 的有无判即可（trouble-maker P2-1）。
+	LastAction   string    `json:"last_action,omitempty"`
+	LastActionAt time.Time `json:"last_action_at,omitempty"`
 }
 
 // Account 历史账号（多账号切换；Python [accounts] 段同语义）。

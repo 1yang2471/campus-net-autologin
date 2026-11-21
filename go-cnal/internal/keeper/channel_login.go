@@ -75,7 +75,12 @@ func (d *Daemon) tryChannelLogin(now time.Time) bool {
 		// 「已在线」也算恢复（门户可能这样答——它认的是这条通道的源 IP，
 		// 答「已在线」说明会话其实在）。与主链路 loginSucceeded 同款判定。
 		d.clearChannelAttempt(v.ID)
-		_ = resp
+		// 动作时间线（2026-11-21 决议 C）：记「通道登录(接口名)」——面板
+		// 能看出是哪张卡自愈的。口径与主链路一致（trouble-maker P2-5）：
+		// 门户答「已在线」不记动作——会话本来就在，不是守护的动作成果。
+		if !alreadyOnline(resp) {
+			d.RecordAction("通道登录(" + v.Iface + ")")
+		}
 		return true
 	}
 	return false

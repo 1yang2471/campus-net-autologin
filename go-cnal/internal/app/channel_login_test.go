@@ -59,15 +59,56 @@ func TestChannelLoginBindsChannelSource(t *testing.T) {
 }
 
 // 行为：绑定的源与通道源不一致时不得投递（凭据不许发往别的出口）。
-func TestChannelLoginRefusesMismatchedSource(t *testing.T) {
+// 2026-11-21 M2-c 真机踢线实证改写：旧版把「门户 IP」误当「解析源」与通道源
+// 全等校验——真机上门户 IP(1.1.1.2) 永远 ≠ 通道源(172.29.153.208)，通道登录
+// 100% 恒拒（WiFi 掉线无人自愈的根因）。解析源一致性由 channelLogin 绑通道源
+// 解析结构性保证，不在投递端重复校验；本测试改锁「门户 IP ≠ 通道源时必须
+// 正常投递」的真机形态。
+func TestChannelLoginDeliversWhenPortalIPOffChannelSource(t *testing.T) {
+	got := make(chan url.Values, 1)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = r.ParseForm()
+		got <- r.PostForm
+		_, _ = w.Write([]byte("success"))
+	}))
+	defer srv.Close()
+
+	p := &plumbing{portalHost: "portal.example.edu", portalPort: "443"}
+	cfg := daemonConfig{
+		Server:       srv.URL,
+		LoginPath:    "/ac_portal/login.php",
+		LoginPage:    "/",
+		UserAgent:    "test-agent",
+		LoginTimeout: 5 * time.Second,
+	}
+	port := srv.Listener.Addr().(*net.TCPAddr).Port
+	// 真机形态：通道源 127.0.0.2 ≠ 门户 IP 127.0.0.1（同为回环段，路由可达）
+	deliver := channelDeliver(p, cfg, net.ParseIP("127.0.0.2"), net.ParseIP("127.0.0.1"), fmt.Sprint(port))
+	if deliver == nil {
+		t.Fatal("应产出投递端")
+	}
+	resp, err := deliver(map[string]string{"userName": "s1", "pwd": "x"})
+	if err != nil {
+		t.Fatalf("门户 IP 与通道源不同（真机常态）必须正常投递，实际被拒: %v", err)
+	}
+	if resp != "success" {
+		t.Errorf("应返回门户原文，实际 %q", resp)
+	}
+	if form := <-got; form.Get("userName") != "s1" {
+		t.Errorf("表单应原样到达，实际 %v", form)
+	}
+}
+
+// 行为：门户 IP 未知（nil）时仍不投递——校验保留的唯一形态。
+func TestChannelLoginRefusesUnknownPortalIP(t *testing.T) {
 	p := &plumbing{portalHost: "portal.example.edu", portalPort: "443"}
 	cfg := daemonConfig{Server: "https://portal.example.edu", LoginPath: "/ac_portal/login.php"}
-	deliver := channelDeliver(p, cfg, net.ParseIP("10.141.53.34"), net.ParseIP("10.0.0.1"), "443")
+	deliver := channelDeliver(p, cfg, net.ParseIP("10.141.53.34"), nil, "443")
 	if deliver == nil {
 		t.Fatal("应产出投递端")
 	}
 	if _, err := deliver(map[string]string{"userName": "s1", "pwd": "x"}); err == nil {
-		t.Fatal("源与通道不符时不得投递凭据")
+		t.Fatal("门户 IP 未知时不得投递凭据")
 	}
 }
 

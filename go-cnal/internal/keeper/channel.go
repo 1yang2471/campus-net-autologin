@@ -129,6 +129,17 @@ func (g *ChannelGuard) tick() {
 	}()
 }
 
+// ForceProbe 作废观察节流（2026-11-21 决议 D）：免认证窗口结束的边沿调用
+// ——窗口内门户不维护任何通道的会话，60s 节流里的陈旧「已认证」读数在
+// 窗口结束后照样骗面板。置零节流起点，下一拍立即重探（主链路 7fefe08
+// 同款边沿语义，收口在 ChannelGuard 防止两处规矩漂移）。nil 安全。
+func (g *ChannelGuard) ForceProbe() {
+	if g == nil {
+		return
+	}
+	g.at = time.Time{} // 与 tick 同 goroutine（Tick 调用链），无需加锁
+}
+
 // now 读时钟（缝未接线时回落 time.Now）。
 func (g *ChannelGuard) now() time.Time {
 	if g.Now != nil {

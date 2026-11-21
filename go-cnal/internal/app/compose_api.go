@@ -18,10 +18,19 @@ func newAPI(cfg *daemonConfig, p *plumbing, d *keeper.Daemon) *api.Server {
 	a := api.New()
 	// 查流量缝：面板/托盘 /flux 端点直通内核同款 flux 查询（同一 portal 客户端、
 	// 同一 parseFluxTable——物理栈纪律与判死探针同源，不造第二份）。
-	a.FetchFlux = func() (map[string]string, error) { return p.fluxQuery(*cfg) }
+	// 实时快照成功后回写守护缓存（2026-11-21 用户报告「流量明细与今日流量
+	// 数值不一致」：明细实时 vs 今日流量缓存，时差制造两个数字——回写收敛）。
+	a.FetchFlux = func() (map[string]string, error) {
+		data, err := p.fluxQuery(*cfg)
+		if err == nil {
+			d.StoreFluxView(data)
+		}
+		return data, err
+	}
 	a.Snapshot = func() api.Snapshot {
 		state, detail, v6State, sessionDead, freeMode := d.View()
 		h := d.Health()
+		lastKind, lastAt := d.LastAction()
 		snap := api.Snapshot{
 			State:   state,
 			Detail:  detail,
@@ -45,6 +54,10 @@ func newAPI(cfg *daemonConfig, p *plumbing, d *keeper.Daemon) *api.Server {
 			// 多通道认证态（2026-11-20 双通道 M1）：每张物理卡各自一份
 			// （门户按源 IP 记会话）。label 由内核词表给出。
 			Channels: d.ChannelViews(),
+			// 动作时间线（2026-11-21 决议 C）：最近一次守护动作，面板显示
+			//「N 分钟前·自动登录」——断网排查第一眼可读。
+			LastAction:   lastKind,
+			LastActionAt: lastAt,
 			Extra: map[string]bool{"session_dead": sessionDead, "free_mode": freeMode,
 				"auto_reconnect": d.AutoReconnectOn(),
 				"multi_channel":  d.MultiChannelOn()},
@@ -161,6 +174,8 @@ func newAPI(cfg *daemonConfig, p *plumbing, d *keeper.Daemon) *api.Server {
 		// 切账号成功：作废流量视图缓存（旧账号读数不得显示在新账号名下；
 		// 下一拍 Tick 立即重查——2026-11-20 用户报告「今日流量与明细不一致」）。
 		d.InvalidateFlux()
+		// 动作时间线（2026-11-21 决议 C）：切账号也是守护动作，面板可追溯。
+		d.RecordAction("切换账号")
 		return msg, nil
 	}
 	// 面板设置校验（api /config POST 在任何写入之前调用）：免认证时段必须

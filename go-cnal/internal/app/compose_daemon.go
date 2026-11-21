@@ -110,7 +110,18 @@ func newDaemon(cfg daemonConfig, p *plumbing) *keeper.Daemon {
 	// 同一份账号级额度（p.rl 是单例）。
 	d.SetMultiChannel(cfg.MultiChannel)
 	d.ChannelLogin = func(v keeper.ChannelView) (string, error) {
-		return p.channelLogin(cfg, ChannelRef{ID: v.ID, Iface: v.Iface, IP: v.IP})
+		resp, err := p.channelLogin(cfg, ChannelRef{ID: v.ID, Iface: v.Iface, IP: v.IP})
+		// 通道登录事件可见（2026-11-21 复盘：通道自愈/失败在状态日志里无痕，
+		// 一条「通道」行都搜不到，排查只能靠 /state 反推）。每次尝试一行，
+		// 频率与主登录同受闸门约束，量级安全。
+		if path := LogFilePath(); path != "" {
+			event := fmt.Sprintf("通道登录(%s %s)完成", v.Iface, v.IP)
+			if err != nil {
+				event = fmt.Sprintf("通道登录(%s %s)失败: %v", v.Iface, v.IP, err)
+			}
+			_ = AppendEvent(path, EventClock(), event)
+		}
+		return resp, err
 	}
 	// 会话级存活探针（2026-11-11 实证：userflux 是账号级读数，会话释放后仍有
 	// 数据 → 只靠 flux 判不出「会话没了」，守护不会自动重登）。

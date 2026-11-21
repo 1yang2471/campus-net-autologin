@@ -24,20 +24,63 @@ func (d *Daemon) doLogin(now time.Time, l1 bool) {
 }
 
 // loginSucceeded 登录成功分支：清判死/免会话态，跑 SESSION_FALSE 与熔断计数。
+//
+// 「已在线」哨兵（2026-11-21 今晨 3.5h 假在线事故）：判死后的重登答「已在线」
+// 不得直接点亮在线——账号级「已在线」≠ 本 IP 会话恢复（账号可能绑在别处/
+// 别设备，重登被门户按「已在线」拒绑）。接线了 IP 级真值（SessionAlive/
+// online_check）就当场复核分流：报活（flux 撒谎型）清判死回在线；报死
+// （账号绑别处型）保持判死走 t37，循环由 suspect 熔断截断并点名绑定嫌疑。
+// 未接线保持 Python P-3 原语义（点亮在线）——旧测试的装配即此形态。
 func (d *Daemon) loginSucceeded(now time.Time, resp string, wasDead bool) {
-	d.setSessionDead(false)
-	d.setFreeMode(false)
-	d.freeStreak = 0
-	d.invalidateSessionCache() // 登录后会话已变：下次 L1 红须重新问门户
 	// SESSION_FALSE 自停闸：判死→重登→门户答「已在线」= flux 在撒谎，
-	// 矛盾 ×3 → 探针自停 3600s（假判死不得变成登录风暴）。
+	// 矛盾 ×3 → flux 探针自停 3600s（假判死不得变成登录风暴）。
 	if wasDead && alreadyOnline(resp) {
 		d.sessFalse++
 		if d.sessFalse >= sessFalseLimit {
 			d.fluxOffUntil = now.Add(sessFalseDisable)
 			d.sessFalse = 0
 		}
+		if d.SessionAlive != nil {
+			a, aerr := d.SessionAlive()
+			if aerr == nil && a {
+				// flux 撒谎型：IP 级真值确认本 IP 会话活着——清判死回在线。
+				// 清账口径与 probeSessionOnce 活分支一致（trouble-maker P2-2）：
+				// 复核即真值，L1 红缓存一并作废，退避/瞬态连击清零。
+				d.setSessionDead(false)
+				d.suspect = 0
+				d.setFreeMode(false)
+				d.freeStreak = 0
+				d.rejectUntil = time.Time{}
+				d.transientStreak = 0
+				d.invalidateSessionCache()
+				d.setState(StateOnline, "门户答已在线，online_check 复核本 IP 会话在线")
+				return
+			}
+			if aerr != nil {
+				// 复核不可得（未知，P2-4）：保持判死等下拍重问——未知证据上
+				// 不得进 suspect 熔断计数，也不下「账号绑别处」的确定结论。
+				d.setState(StateRejected, "门户答已在线，online_check 复核不可得——保持观察，下拍重问")
+				return
+			}
+			// 账号绑别处型：本 IP 仍未恢复。保持判死（t37 下一拍继续），矛盾
+			// 循环由 suspect 熔断截断——退避期正是面板切账号/注销别处会话的
+			// 人工窗口。
+			d.suspect++
+			if d.suspect >= suspectLimit {
+				d.rejectUntil = now.Add(d.rejectBackoff)
+				d.suspect = 0
+				d.setState(StateRejected, "连续「已在线」但本 IP 会话未恢复——疑账号绑定在别处，熔断退避（面板切账号或注销别处会话可解）")
+				return
+			}
+			d.setState(StateRejected, "门户答已在线但本 IP 会话仍未恢复（疑账号绑别处）——保持观察，下拍复核")
+			return
+		}
 	}
+	d.setSessionDead(false)
+	d.setFreeMode(false)
+	d.freeStreak = 0
+	d.invalidateSessionCache() // 登录后会话已变：下次 L1 红须重新问门户
+	d.RecordAction("自动登录")     // 动作时间线（2026-11-21 决议 C）：门户受理了这次登录
 	d.suspect++
 	if d.suspect >= suspectLimit {
 		d.rejectUntil = now.Add(d.rejectBackoff)
@@ -123,4 +166,16 @@ func (d *Daemon) classifyRejection(err error) time.Duration {
 	}
 	d.transientStreak = 0
 	return d.rejectBackoff
+}
+
+// SetBackoff 覆盖退避参数（ini reject_backoff/transient_backoff；<=0 保持默认）。
+// 只在 Tick 启动前调用——启动后改要另做同步，当前面板没有这两个键的热改。
+// 2026-11-21 从 daemon.go 拆到登录退避的归属地（守 2 万字节提交闸）。
+func (d *Daemon) SetBackoff(reject, transient time.Duration) {
+	if reject > 0 {
+		d.rejectBackoff = reject
+	}
+	if transient > 0 {
+		d.transientBackoff = transient
+	}
 }
