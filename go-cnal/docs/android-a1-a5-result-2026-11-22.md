@@ -69,13 +69,16 @@ inspectStacks 门户侧确认归属」，两轮：
 
 | # | 缺陷 | 位置 | 建议 |
 |---|---|---|---|
-| D1 | **首屏键盘遮挡输入**：程序化 LinearLayout 无 ScrollView、未设
-windowSoftInputMode=adjustResize——键盘弹起时账号/密码框被硬挡，输入内容
-不可见（用户实测点名的第一体验缺陷） | MainActivity.kt（程序化 UI） | ScrollView 包表单 + adjustResize；验收轮后修 |
+| D1 | **首屏键盘遮挡输入**：edge-to-edge（targetSdk 35 强制）下
+`windowSoftInputMode=adjustResize` 属性无效，且无 ime() 内边距补偿——键盘
+弹起时账号/密码框被硬挡，输入内容不可见（用户实测点名的第一体验缺陷）。
+**首轮记录修正（2026-11-22 修复时核实）**：「无 ScrollView」系误报——
+buildUi() 返回的本来就是 ScrollView（MainActivity.kt:189），真缺的是 ime
+insets 处理 | MainActivity.kt（程序化 UI） | ime() 内边距 + 显式焦点滚动；已修（见 §5） |
 | D2 | 首屏状态行不自动刷新：内核启动后仍显示「启动中｜守护未启动」（要手点
-「刷新状态」） | MainActivity refreshStatus 只在按钮触发 | 内核起来后主动回调刷新（或 5s 轮询） |
+「刷新状态」） | MainActivity refreshStatus 只在按钮触发 | onResume 5s 轮询；已修（见 §5） |
 | D3 | 自动探测门户对「已认证手机」必失败（无 302 劫持可探）——失败无提示
-原因（Toast 一闪而过） | CnalKernel.detectPortal | 失败 Toast 带可行动原因（如「当前已在线，无需探测」） |
+原因（Toast 一闪而过） | CnalKernel.detectPortal | DetectHint 词表映射；已修（见 §5） |
 | D6 | **「用户名或密码错误」在多次登录失败场景下成因不可辨**（现象钉死、
 成因未定案）：手机 14:27:39 起 4+ 次登录 jszeng 全被拒（同一密码 15:07
 登录成功）——用户实测知识**否证「跨设备互斥」**（本校同账号多设备可并存，
@@ -95,3 +98,35 @@ testplan §0「4 地址配额」）；候选成因：①快速连切（ghlin 登
 全部收进拼音缓冲、远程「中/英」切换被状态机吞回；MIUI 拦装 ADBKeyboard
 （INSTALL_FAILED_USER_RESTRICTED）。密码类输入绝不能走 IME/UI——走回路
 API POST /config（已验证可用） | —— | 验收轮 SOP：凭据一律 API 注入 |
+
+## 5. D1/D2/D3 修复实测记录（2026-11-22 当日修复+复核）
+
+> 同日修复三件套（安卓壳，内核 AAR 不变），重打 APK 覆盖安装（同签名，
+> Keystore 凭据保留），全部真机复核过：无线 adb + screencap/uiautomator。
+
+| # | 修复 | 实测证据（2026-11-22 15:27–15:35） |
+|---|---|---|
+| D1 | **ime() 内边距 + 显式焦点滚动**：edge-to-edge 下 adjustResize 无效
+（targetSdk 35 强制），等效机制 = insets listener 里 `maxOf(bars.bottom,
+ime.bottom)` 压内容区 + 键盘可见时把焦点字段滚到可视区（`paddingTop +
+f.bottom - visible`，漏 paddingTop 会差一截——真机取证迭代两次） | tap
+密码框 → 键盘弹起 → **密码框完整可见在键盘正上方**（绿色焦点下划线），
+内容区不再被键盘硬挡（截图留档） |
+| D2 | **onResume 5s 轮询**：onResume 立即一拍 + 每 5s 自循环，onPause 停；
+内核未起时显示 notRunningSnapshot「启动中｜守护未启动」，起来后自动翻真
+状态 | 起 app 未手点刷新，状态行自动「启动中｜守护未启动」→「在线｜IPv6
+不可观测」翻转（dump 取证） |
+| D3 | **DetectHint 词表映射**：Go 逐锚点诊断串（词表唯一出处 detect.go）→
+可行动文案；已认证 204 →「当前网络已认证在线，无需探测——直接点『打开
+面板』看守护状态」；优先级 已认证 > 疑被放行 > 不可达 > 未注入源 > 兜底
+透传；JVM 单测 6/6（DetectHintTest） | 已认证手机点「自动探测门户」→
+Toast「当前网络已认证在线，无需探测——直接点『打开面板』看守护…」
+（截图留档），不再是原始 Go 诊断串 |
+
+**修复过程的两个取证教训**：
+1. **ScrollView 内置焦点滚动不可依赖**：ime padding 生效后 requestChildFocus
+   只滚到「字段露头」，焦点字段下半仍被键盘挡——显式滚动必须自己算
+   （contentBottom = paddingTop + f.bottom）；
+2. **验证期操作踩坑**：BACK 键在键盘已收时会把 Activity 一起退掉（恢复
+   守护时 tap 点到了桌面）；屏幕超时改过要恢复（本次 600000→原值 300000
+   已恢复）。所有验证操作后守护已重新拉起、状态「在线」复核过。

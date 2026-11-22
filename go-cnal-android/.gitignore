@@ -25,3 +25,4 @@ memory/denied.json
 *.jks
 *.keystore
 secrets/
+.kotlin/
