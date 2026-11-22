@@ -77,29 +77,48 @@ func newDaemon(cfg daemonConfig, p *plumbing) *keeper.Daemon {
 	}
 	// L2 出口策略观察（Python probe_l2_restricted 同源）：校园 DNS 绑源解析
 	// 大众站（CDN 多线，必须实时解析），钉 IP 走物理栈 TLS 握手——被 RST =
-	// 出口 DPI 受限窗口（认证会话正常，只观察不"修复"）。DNS 不通=L1 问题
-	// 不是 L2，报 ok 不误报。
+	// 出口 DPI 受限窗口（认证会话正常，只观察不"修复"）。
+	// 2026-11-22 双路对照（复盘内因 1）：campus 路死时用系统栈按域名拨号对照
+	//——系统栈实测可用 → 校园 DNS 给了异常解析结果（dns_broken），与真·AC
+	// 拉黑（双路都死，restricted）区分；4.5h 假警报不再发生。
 	d.ProbeL2 = func() string {
 		const l2Host = "www.baidu.com"
 		bound, berr := netstack.ResolveBound(p.currentV4(), cfg.CampusDNS, l2Host, cfg.ProbeTimeout)
 		// 目标是 v4 绑源客户端，必须是 v4 地址：绑源解析可能先回 v6（校园 DNS
 		// 对百度的 A/AAAA 双记录，2026-11-20 实测先给 240e:...），v4 源拨 v6
 		// 报 "no suitable address found" → 恒判「出口受限」假警告。
-		// 回退系统解析的 v4（与浏览器回落同路）；都拿不到就放弃观察——
-		// 探测自身失败不是出口受限。
+		campusTargeted := berr == nil && bound != nil && bound.To4() != nil
+		if campusTargeted {
+			// ipPin 必须 host:port（pinnedDialer 直接 Dial 它）；裸 IP 会报
+			// missing port 让 L2 恒报 restricted（2026-11-08 发布截图实证）。
+			if _, err := p.tlsProbe.Get("https://"+l2Host+"/", nil,
+				net.JoinHostPort(bound.String(), "443")); err == nil {
+				return l2Verdict(true, true, false, false)
+			}
+			// campus 路死 → 对照：系统解析拿 IP，**同一物理栈**钉该 IP 再测。
+			// 两路都是物理栈钉 IP，TLS 结果只随解析结果变化——钉系统解析
+			// IP 活 → campus 给的解析结果不可用（dns_broken，诊断有据）；
+			// 也死 → 出口真受限（DPI 按 SNI 掐时钉任何真 IP 都死）。lazy：
+			// 正常期零额外开销。不用系统栈按域名拨号对照——TUN 兜底会让
+			// 「隧道活」冒充「校园路活」，把真受限误诊成 DNS 异常。
+			sysT, sysOK := l2ProbeSystem(p.tlsProbe, l2Host)
+			return l2Verdict(true, false, sysT, sysOK)
+		}
+		// campus 目标不可得（解析失败/只有 v6）：现状回退路——系统解析拿 v4
+		// 钉 IP 直测（与浏览器回落同路）；都拿不到就放弃观察——解析失败不是
+		// 出口受限。
 		ip, ok := l2Target(bound, berr, func() (net.IP, error) {
 			return netstack.ResolveSystem(l2Host)
 		})
 		if !ok {
-			return "ok"
+			return l2Verdict(false, false, false, false)
 		}
-		// ipPin 必须是 host:port（pinnedDialer 直接 Dial 它）；裸 IP 会报
-		// missing port 让 L2 恒报 restricted（2026-11-08 发布截图实证）。
+		sysOK := false
 		if _, err := p.tlsProbe.Get("https://"+l2Host+"/", nil,
-			net.JoinHostPort(ip.String(), "443")); err != nil {
-			return "restricted" // 大众站 TLS 被 RST = DPI 风控窗口
+			net.JoinHostPort(ip.String(), "443")); err == nil {
+			sysOK = true
 		}
-		return "ok"
+		return l2Verdict(false, false, true, sysOK)
 	}
 	d.FetchFlux = func() (map[string]string, error) { return p.fluxQuery(cfg) }
 	// 多通道观察（2026-11-20 双通道 M1）：只观察、零凭据——每张物理卡各自
@@ -166,6 +185,54 @@ func newDaemon(cfg daemonConfig, p *plumbing) *keeper.Daemon {
 		return resp.Resp, nil
 	}
 	return d
+}
+
+// l2Verdict L2 双路对照判定表（2026-11-22 复盘内因 1）。sysOK 语义 =
+// 「**物理栈**钉系统解析 IP 的 TLS 活」（同栈对照——两路都是绑源钉 IP，
+// 结果差异只来自解析，诊断才有据；见 ProbeL2 闭包注释）：
+//   - campus 路活 → ok（正常期零额外开销——对照路不触网）；
+//   - campus 路死 + 对照路活 → dns_broken（campus 给的解析结果不可用，
+//     物理栈实测可达——11-22 事故假警报形态，与真·AC 拉黑区分）；
+//   - campus 路死 + 对照路死/不可测 → restricted（真·出口受限；无对照
+//     证据时保守维持受限读数，不引入新误报）。
+//
+// campus 目标不可得 → 走现状回退路语义：对照路活 → ok；对照路死 → restricted；
+// 都不可得 → ok（探测自身失败不是出口受限）。
+func l2Verdict(campusTargeted, campusOK, sysTargeted, sysOK bool) string {
+	if !campusTargeted {
+		if !sysTargeted {
+			return "ok" // 探测自身失败不是出口受限（2026-11-20 语义不变）
+		}
+		if sysOK {
+			return "ok"
+		}
+		return "restricted"
+	}
+	if campusOK {
+		return "ok"
+	}
+	if !sysTargeted {
+		return "restricted" // 无对照证据，保守维持受限读数
+	}
+	if sysOK {
+		return "dns_broken"
+	}
+	return "restricted"
+}
+
+// l2ProbeSystem 对照路探测：系统解析拿 v4，物理栈钉该 IP 测 TLS（同栈对照，
+// 见 ProbeL2 闭包注释）。返回 (targeted, tlsOK)——targeted=false = 系统解析
+// 不可得，对照证据缺失。
+func l2ProbeSystem(tlsProbe *netstack.Client, host string) (bool, bool) {
+	ip, err := netstack.ResolveSystem(host)
+	if err != nil || ip == nil || ip.To4() == nil {
+		return false, false
+	}
+	if _, err := tlsProbe.Get("https://"+host+"/", nil,
+		net.JoinHostPort(ip.String(), "443")); err == nil {
+		return true, true
+	}
+	return true, false
 }
 
 // l2Target 选 L2 探测目标（v4 绑源客户端需要 v4 地址）：

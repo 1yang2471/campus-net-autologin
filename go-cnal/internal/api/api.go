@@ -2,6 +2,7 @@
 // GET /state 状态快照、POST /login 手动重连。词表与 Python kernel_api 逐字
 // 对齐——两份外壳（Windows 托盘 / 安卓 WebView 面板）吃同一契约，「全功能
 // 对齐」的判据是契约字段与动作集合一致，不是像素一致。
+// 词表与渲染规则住在 labels.go（2026-11-22 拆分，守 2 万字节提交闸）。
 package api
 
 import (
@@ -17,86 +18,6 @@ import (
 	"cnal/internal/keeper"
 )
 
-// stateLabels/stateColors 与 Python shell/kernel_api.py 逐字对齐（互裁锚点）。
-var stateLabels = map[string]string{
-	"online":      "在线",
-	"offline":     "离线",
-	"portal_down": "认证服务器不可达",
-	"rejected":    "登录被拒",
-	"paused":      "自动重连已关闭",
-	"starting":    "启动中",
-	"free_window": "免认证时段",
-}
-
-var stateColors = map[string]string{
-	"online":      "#4f9d63",
-	"offline":     "#d1913f",
-	"portal_down": "#d1913f",
-	"rejected":    "#d05f52",
-	"paused":      "#8b919b",
-	"starting":    "#8b919b",
-	"free_window": "#8b919b",
-}
-
-// reasonLabels/reasonColors 机器原因 → 显示词表（2026-11-18 双读数）：
-// 只覆盖「状态名本身会撒谎」的几种。典型：本地 30 秒闸原来顶着 rejected
-// 的「登录被拒」红字，其实是守护自己暂停，不是门户拒绝。
-var reasonLabels = map[string]string{
-	"local_throttle":     "自动登录暂停",
-	"binding_invalid":    "校园出口不可用",
-	"portal_unreachable": "校园出口不可达",
-}
-
-var reasonColors = map[string]string{
-	"local_throttle":     "#8b919b",
-	"binding_invalid":    "#d1913f",
-	"portal_unreachable": "#d1913f",
-}
-
-// reasonTexts 原因的一句话说明（面板双读数行用；状态名不重复）。
-var reasonTexts = map[string]string{
-	"binding_invalid":      "服务出口绑定失效",
-	"portal_unreachable":   "绑源到不了门户",
-	"local_throttle":       "本地节流中",
-	"portal_rejected":      "门户拒绝登录",
-	"l2_observed":          "出口受限（观察）",
-	"l1_red_session_alive": "锚点异常，会话在线",
-	"session_dead":         "会话不在线",
-	"portal_down":          "认证服务器不可达",
-}
-
-// ReasonLabel 原因对应的显示标签（覆盖状态名；无覆盖时 ok=false）。
-func ReasonLabel(reason string) (string, bool) {
-	v, ok := reasonLabels[reason]
-	return v, ok
-}
-
-// ReasonColor 原因对应的颜色（覆盖状态色；无覆盖时 ok=false）。
-func ReasonColor(reason string) (string, bool) {
-	v, ok := reasonColors[reason]
-	return v, ok
-}
-
-// ReasonText 原因的一句话说明（无则空串；壳层不自造词表）。
-func ReasonText(reason string) string { return reasonTexts[reason] }
-
-// Color 导出状态色（未知状态回退中性灰）——装配层（托盘图标/面板图标）
-// 取色的唯一入口，闭包不得自抄词表（2026-11-07 实证：漏填导致图标空白）。
-func Color(state string) string {
-	if v, ok := stateColors[state]; ok {
-		return v
-	}
-	return stateColors["paused"]
-}
-
-// Label 导出词表访问（未知状态回退状态名本身，Python kernel_api 同语义）。
-func Label(state string) string {
-	if v, ok := stateLabels[state]; ok {
-		return v
-	}
-	return state
-}
-
 // Snapshot 状态快照（契约字段：state/detail/label/color + 布尔扩展位 +
 // v6 四态）。v6_label 由装配层填（文案唯一出处在内核 keeper.V6Label）。
 type Snapshot struct {
@@ -104,8 +25,13 @@ type Snapshot struct {
 	Detail  string `json:"detail"`
 	Label   string `json:"label"`
 	Color   string `json:"color"`
-	V6State string `json:"v6_state,omitempty"`
-	V6Label string `json:"v6_label,omitempty"`
+	// MenuLine 托盘菜单行短文案（2026-11-22 修复项 4，单源渲染）：内核单处
+	// 生成（compose_api 填），菜单行吃短形态、tooltip/面板吃全量 Detail——
+	// Detail 全量进菜单行会把托盘菜单撑到几十字宽（11-22 用户点名）。
+	// omitempty：旧客户端读到的 JSON 形状不变。
+	MenuLine string `json:"menu_line,omitempty"`
+	V6State  string `json:"v6_state,omitempty"`
+	V6Label  string `json:"v6_label,omitempty"`
 	// 物理源读数（面板 IPv4/IPv6 行显示实际绑定源——TUN/代理环境下
 	// 「从哪张网卡出去」是独有信息，不与状态大卡重复）。装配层填，空=未知。
 	V4Src string `json:"v4_src,omitempty"`

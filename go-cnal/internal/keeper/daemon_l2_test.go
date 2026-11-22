@@ -175,14 +175,84 @@ func TestL2StreakShownAsPersistent(t *testing.T) {
 	d := newL2Daemon(&clk, "restricted", &probe)
 	d.Tick() // 受限开始
 	if !strings.Contains(d.Detail, "出口受限") {
-		t.Fatalf("前置：受限应上浮 detail，实际 %q", d.Detail)
+		t.Fatalf("受限应上浮 detail，实际 %q", d.Detail)
 	}
 	if strings.Contains(d.Detail, "持续") {
-		t.Fatalf("前置：短时受限不得标持续，实际 %q", d.Detail)
+		t.Fatalf("短时受限不得标持续，实际 %q", d.Detail)
 	}
 	clk = clk.Add(11 * time.Minute) // 过 L2 节流，受限持续
 	d.Tick()
 	if !strings.Contains(d.Detail, "持续") {
 		t.Fatalf("受限 ≥10min 应点名持续（可见性升级），实际 %q", d.Detail)
+	}
+}
+
+// ============ 2026-11-22 复盘修复项 1：L2 双路对照三态（dns_broken）============
+
+// 行为：dns_broken → detail 报「校园 DNS 解析异常」，不再说「TLS 被重置」、
+// 不报「出口受限」（复盘判据：假警报形态与真·AC 拉黑在文案上区分）。
+func TestL2DnsBrokenShownDistinctFromRestricted(t *testing.T) {
+	clk := time.Unix(0, 0)
+	probe := 0
+	d := newL2Daemon(&clk, "dns_broken", &probe)
+	d.Tick()
+	if d.State != StateOnline {
+		t.Fatalf("前置：应在线，实际 %v/%v", d.State, d.Detail)
+	}
+	if !strings.Contains(d.Detail, "校园 DNS 解析异常") {
+		t.Errorf("dns_broken 应报解析异常，实际 %q", d.Detail)
+	}
+	if strings.Contains(d.Detail, "TLS 被重置") || strings.Contains(d.Detail, "出口受限") {
+		t.Errorf("假警报形态不得再报出口受限/TLS 被重置，实际 %q", d.Detail)
+	}
+}
+
+// 行为：dns_broken 不算受限——L2RestrictedOnUI 为假（气泡不响），
+// DnsBrokenOnUI 为真，Reason 走 dns_broken_observed。
+func TestL2DnsBrokenNotRestrictedOnUI(t *testing.T) {
+	clk := time.Unix(0, 0)
+	probe := 0
+	d := newL2Daemon(&clk, "dns_broken", &probe)
+	d.Tick()
+	if d.L2RestrictedOnUI() {
+		t.Error("dns_broken 不得触发受限可见缝（气泡不响）")
+	}
+	if !d.DnsBrokenOnUI() {
+		t.Error("dns_broken 应点亮解析异常可见缝")
+	}
+	if h := d.Health(); h.Reason != "dns_broken_observed" {
+		t.Errorf("reason 应为 dns_broken_observed，实际 %q", h.Reason)
+	}
+}
+
+// 行为：dns_broken 保留窗口与 l2 对称（恢复后仍提示 2×周期，过后消失）。
+func TestL2DnsBrokenWindowPersistsAfterRecovery(t *testing.T) {
+	clk := time.Unix(0, 0)
+	probe := 0
+	d := newL2Daemon(&clk, "dns_broken", &probe)
+	d.Tick()
+	clk = clk.Add(61 * time.Second)
+	d.ProbeL2 = func() string { probe++; return "ok" }
+	d.Tick()
+	if !d.DnsBrokenOnUI() {
+		t.Error("恢复后保留窗口内仍应可见")
+	}
+	clk = clk.Add(130 * time.Second)
+	d.Tick()
+	if d.DnsBrokenOnUI() {
+		t.Error("保留窗口过后应消失")
+	}
+}
+
+// 行为：dns_broken 持续 ≥10min 升级「持续较久」文案（对称 l2StreakThreshold）。
+func TestL2DnsBrokenStreakShownAsPersistent(t *testing.T) {
+	clk := time.Unix(0, 0)
+	probe := 0
+	d := newL2Daemon(&clk, "dns_broken", &probe)
+	d.Tick()
+	clk = clk.Add(11 * time.Minute)
+	d.Tick()
+	if !strings.Contains(d.Detail, "持续较久") {
+		t.Errorf("≥10min 应点名持续较久，实际 %q", d.Detail)
 	}
 }

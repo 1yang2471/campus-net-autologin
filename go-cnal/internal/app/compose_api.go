@@ -63,12 +63,16 @@ func newAPI(cfg *daemonConfig, p *plumbing, d *keeper.Daemon) *api.Server {
 				"multi_channel":  d.MultiChannelOn()},
 		}
 		// 原因覆盖状态名：本地节流不再冒充「登录被拒」，绑定失效不再只说「离线」。
+		// fake_online 的覆盖即「会话在线｜出口被控」主状态词（2026-11-22 修复项 2）。
 		if lbl, ok := api.ReasonLabel(h.Reason); ok {
 			snap.Label = lbl
 		}
 		if c, ok := api.ReasonColor(h.Reason); ok {
 			snap.Color = c
 		}
+		// 菜单行短形态（2026-11-22 修复项 4）：Reason 覆盖后的终值 Label +
+		// 详情第一段；括号补充说明不进菜单行，完整读数留给 tooltip/面板。
+		snap.MenuLine = api.MenuLine(snap.Label, snap.Detail, snap.UserPath)
 		// 低频轮询缓存的流量视图：只在拿到过读数时带上（omitempty，旧客户端
 		// 读到的 JSON 形状不变）。面板刷 /state 顺带取，不再单独打 /flux。
 		if v := d.FluxUsage(); v.HasPercent || v.Used != "" || len(v.Raw) > 0 {

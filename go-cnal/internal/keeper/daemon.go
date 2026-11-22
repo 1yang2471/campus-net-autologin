@@ -6,47 +6,9 @@ import (
 	"time"
 )
 
-// freeDetectStreak 连续 N 次「锚点绿+登录不受理」即判定免会话态
-// （Python FREE_DETECT_STREAK：第一性原理，免认证时段可直接观测）。
-const freeDetectStreak = 2
-
-// 状态名与 Python 守护对齐（跨实现互裁，同语料同语义）。
-const (
-	StateOnline     = "online"
-	StateOffline    = "offline"
-	StatePortalDown = "portal_down"
-	StateFreeWindow = "free_window"
-	// StateRejected 登录节流/退避/熔断中的展示态（Python 守护同名词表）。
-	StateRejected = "rejected"
-	// StatePaused 自动重连开关关闭时的展示态：只探测报状态，不自动登录
-	//（Python set_state("paused","自动重连已关闭") 同语义）。
-	StatePaused = "paused"
-)
-
-// 登录风暴三闸参数（Python tick 同源值：LOGIN_MIN_INTERVAL=30、suspect 上限 3；
-// 退避默认值 reject_backoff=600 / transient_backoff=30，异校可在 ini 覆盖）。
-// 外加 SESSION_FALSE 自停闸：矛盾上限 3、自停 3600s。
-const (
-	loginMinInterval        = 30 * time.Second
-	defaultRejectBackoff    = 600 * time.Second
-	defaultTransientBackoff = 30 * time.Second
-	// transientStreakLimit 瞬态错误连续 N 次升级为长退避（Python
-	// handle_rejection：transient_streak >= 5 → reject_backoff）。
-	transientStreakLimit = 5
-	suspectLimit         = 3
-	sessFalseLimit       = 3
-	sessFalseDisable     = 3600 * time.Second
-	// v6ProbeInterval v6 四态观察节流（同 Python L2_PROBE_S 量级）。
-	v6ProbeInterval = 60 * time.Second
-	// sessionProbeInterval L3 会话探针节流（Python SESSION_PROBE_S=60 同源）：
-	// tick 间隔可低至 1s（用户可配），不节流就是每秒一次 userflux——
-	// 2026-11-10 实测 5 拍 5 次请求、2s 即判死（规格 §12「与 60s 的 L2/L3 同拍」）。
-	sessionProbeInterval = 60 * time.Second
-	// offlineLoginDebounce L1 连续失败去抖（2026-11-13 登录风暴实证）：探测
-	// 节拍可低至 1s（用户可配），不节流就是每秒一次锚点探测；单拍超时不应
-	// 触发登录，避免登录风暴撞校园反暴力冻结线（校园实测 12 次/小时）。
-	offlineLoginDebounce = 3
-)
+// 内核参数与状态词常量住在 params.go（2026-11-22 拆分，守 2 万字节提交闸）；
+// 免认证时段方法在 freewindow.go；展示字段读写与开关交接在 daemon_view.go；
+// 动作时间线在 daemon_action.go——语义归属见各文件头。
 
 // Daemon 守护内核骨架：探测缝可替换（测试不触网）；登录/会话判死在
 // Task G3/G4 接入，UI/托盘/打包在切片三。
@@ -176,12 +138,24 @@ type Daemon struct {
 	sessRedKnown  bool        // L1 红时会话真值是否可得
 	sessRedAlive  bool        // L1 红时最近一次会话真值
 	userPathAt    time.Time   // 上次用户路径探测时刻（5s 节流）
-	// userPathSince 本轮用户路径红起点（0 = 不在异常中；Tick 同 goroutine
-	// 读写，同 l2Since）：≥5 分钟才上浮在线态互证附注（决议 B，见 daemon_probe.go）。
+	// userPathSince 本轮用户路径红起点（0 = 不在异常中）。混合纪律：跨
+	// goroutine 读者（fakeOnline）走锁；Tick 内读者（onlineDetail/userPathDetail）
+	// 裸读——勿把这些函数迁出 Tick goroutine（2026-11-22 修复项 2 起 mu 护住）。
+	// ≥5 分钟才上浮在线态互证附注（决议 B，见 daemon_probe.go）。
 	userPathSince time.Time
 	l2Restricted  bool        // 最近一次 L2 观察结果
 	l2WindowUntil time.Time   // L2 受限提示保留窗口（恢复后仍提示 2×周期）
-	l2Since       time.Time   // 本轮 L2 受限起点（0 = 不在受限中；Tick 同 goroutine 读写）
+	l2Since       time.Time   // 本轮 L2 受限起点（0 = 不在受限中；锁纪律同 userPathSince）
+	// dnsBroken 族：L2 同栈对照发现「校园 DNS 给不可用解析结果」的可见态
+	//（2026-11-22 复盘内因 1：campus_dns 返回假 IP → 钉假 IP TLS 必死 →
+	// 4.5h 假警报，与真·AC 拉黑混为一谈）。记账与 l2 族对称，锁纪律同上。
+	dnsBroken       bool      // 最近一次 L2 同栈对照：校园 DNS 解析异常
+	dnsBrokenWindow time.Time // 提示保留窗口（恢复后仍提示 2×周期，同 l2WindowUntil）
+	dnsBrokenSince  time.Time // 本轮起点（0 = 不在异常中）
+	// l1RedSessionAlive 锚点红+会话绿在线态的结构化标记：setStateL1Red 置位、
+	// setState 清位——health.go 的 Reason 判定不再 Contains(detail,"锚点异常")
+	// 文本反推（文案即接口的脆弱反推，2026-11-22 复盘修复项 2 根治）。
+	l1RedSessionAlive bool
 	offlineStreak int         // L1 连续失败拍数（登录去抖；锚点绿即清零）
 	// 休眠观察（2026-11-21 决议 A；语义与阈值在 daemon_dormant.go）：portal_down
 	// 长期持续（蜂窝热点形态）时降频观察，不再每拍探测+每拍重选白烧。
@@ -336,7 +310,7 @@ func (d *Daemon) Tick() {
 		if dead, known := d.probeSessionOnL1Red(now); known {
 			if !dead {
 				d.offlineStreak = 0
-				d.setState(StateOnline, d.sessionAliveL1RedDetail())
+				d.setStateL1Red(d.sessionAliveL1RedDetail())
 				return
 			}
 			// 会话真值是权威证据：跳过 L1 三拍去抖，直接进登录闸。

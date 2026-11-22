@@ -66,11 +66,18 @@ func (d *Daemon) Health() HealthView {
 	case StateOnline:
 		h.Auth = AuthOnline
 		h.Reason = "online"
-		if d.L2RestrictedOnUI() {
-			h.Reason = "l2_observed"
-		}
-		if strings.Contains(detail, "锚点异常") {
+		// 结构化判定（2026-11-22 复盘修复项 2）：不再 Contains(detail,"锚点异常")
+		// 文本反推——改文案静默丢 Reason 的脆弱机制。优先级：fake_online
+		//（三读数组合，最需行动指引）> l1_red > l2_observed > dns_broken
+		//（l2 在前：受限保留窗口与 dns_broken 并存时，更严重的受限胜出）。
+		if d.fakeOnline() {
+			h.Reason = "fake_online"
+		} else if d.l1RedOn() {
 			h.Reason = "l1_red_session_alive"
+		} else if d.L2RestrictedOnUI() {
+			h.Reason = "l2_observed"
+		} else if d.DnsBrokenOnUI() {
+			h.Reason = "dns_broken_observed"
 		}
 	case StateOffline:
 		h.Auth = AuthOffline
@@ -100,4 +107,12 @@ func (d *Daemon) Health() HealthView {
 		h.Reason = "no_action"
 	}
 	return h
+}
+
+// l1RedOn 结构化标记读侧（health.go Reason 判定用；setStateL1Red 置位、
+// setState 清位）。
+func (d *Daemon) l1RedOn() bool {
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+	return d.l1RedSessionAlive
 }

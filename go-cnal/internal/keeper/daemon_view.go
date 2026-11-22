@@ -6,11 +6,25 @@ package keeper
 // 动作时间线（决议 C）住在 daemon_action.go。
 
 // setState 状态行写入（Tick goroutine 调用；与 View/StateForUI 的加锁读配对）。
+// 同时清 l1RedSessionAlive 标记：L1 红在线态必须走 setStateL1Red 显式置位，
+// 其余状态写入一律回到非 L1 红形态（防上一拍的标记漏清）。
 func (d *Daemon) setState(state, detail string) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	d.State = state
 	d.Detail = detail
+	d.l1RedSessionAlive = false
+}
+
+// setStateL1Red 锚点红+会话绿在线态写入（2026-11-22 复盘修复项 2）：除状态行
+// 外置结构化标记 l1RedSessionAlive——health.go 的 Reason 判定改走标记，不再
+// Contains(detail,"锚点异常") 文本反推（改文案静默丢 Reason 的脆弱机制）。
+func (d *Daemon) setStateL1Red(detail string) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.State = StateOnline
+	d.Detail = detail
+	d.l1RedSessionAlive = true
 }
 
 // View 展示字段快照（回路 API / 托盘用）：加锁读，与 Tick 的 setState 写配对。
