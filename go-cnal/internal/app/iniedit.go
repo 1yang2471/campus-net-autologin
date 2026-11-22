@@ -14,7 +14,8 @@ import (
 // free_windows/campus_dns 白名单），其余节与键原样保留。
 func updateIniFields(values map[string]string) error {
 	allowed := map[string]bool{"username": true, "server": true, "free_windows": true,
-		"campus_dns": true, "auto_reconnect": true, "bind_ip": true,
+		"campus_dns": true, "auto_reconnect": true, "multi_channel": true,
+		"bind_ip": true,
 		"login_path": true} // login_path 只由首跑探测补默认，面板不提交
 	// 面板高级设置区复用同一份键集合：不在这里再抄一遍白名单（漏一个键
 	// 会让面板保存显示成功、ini 却没变化）。

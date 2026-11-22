@@ -41,20 +41,39 @@ func ResolveBound(src net.IP, dnsServer, host string, timeout time.Duration) (ne
 	if err != nil {
 		return nil, err
 	}
+	return pickPortalIP(ips)
+}
+
+// pickPortalIP 从 DNS 应答里挑一个可用地址：**v4 优先**，没有 v4 才回退 v6。
+//
+// 为什么 v4 优先（2026-11-20 真机实证）：所有绑定客户端都是 v4 源
+// （DiscoverSource/绑源解析/门户钉 IP/L2 探测），用 v4 源拨 v6 目标报
+// "no suitable address found"。而 LookupIP("ip") 对同时有 A/AAAA 的域名
+// 可能先返回 AAAA（www.baidu.com 实测先给 240e:...）——L2 探测因此**恒判**
+// 「出口受限」，面板一直挂假警告而两条源其实都通。
+//
+// 形状类拒绝沿用 unusablePortalAddr（环回/链路本地/fake-ip 等）。
+func pickPortalIP(ips []net.IP) (net.IP, error) {
 	rejected := 0
+	var onlyV6 net.IP
 	for _, ip := range ips {
 		if unusablePortalAddr(ip) {
 			rejected++
 			continue
 		}
-		return ip, nil
-	}
-	if len(ips) > 0 {
-		if rejected == len(ips) {
-			return nil, fmt.Errorf(
-				"DNS 应答无可用地址（%d 个地址全部落在环回/保留段/fake-ip 段）", len(ips))
+		if ip.To4() != nil {
+			return ip, nil
 		}
-		return nil, errors.New("DNS 应答无可用地址")
+		if onlyV6 == nil {
+			onlyV6 = ip
+		}
+	}
+	if onlyV6 != nil {
+		return onlyV6, nil
+	}
+	if len(ips) > 0 && rejected == len(ips) {
+		return nil, fmt.Errorf(
+			"DNS 应答无可用地址（%d 个地址全部落在环回/保留段/fake-ip 段）", len(ips))
 	}
 	return nil, errors.New("DNS 无应答地址")
 }

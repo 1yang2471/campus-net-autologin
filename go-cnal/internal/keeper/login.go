@@ -105,11 +105,22 @@ func v6BindOf(dualStack bool, form map[string]string) V6Bind {
 // 每次登录重新走 BuildLogin（v6 临时地址会轮换，缓存会绑到失效地址）；
 // 凭据取热切换快照（Relocate 后下一次登录即用新账号）。
 func (a *LoginAction) Do() (Outcome, error) {
+	return a.DoVia(a.Deliver)
+}
+
+// DoVia 用调用方给定的投递端执行一次登录：表单构造与应答判定与 Do 完全一致，
+// 只有「凭据发往哪条出口」不同。
+//
+// 双通道用这条缝（2026-11-20 M2）：门户按**来源 IP** 记会话，通道登录必须
+// 绑到那条通道自己的源 IP——用主链路的出口发，认证的是主链路那条会话，
+// 通道照样是未认证的。共用 DoVia 而不是复制一份，是为了「表单长什么样、
+// 成功怎么判」只有一处实现（复制一份迟早漂移）。
+func (a *LoginAction) DoVia(deliver func(form map[string]string) (string, error)) (Outcome, error) {
 	user, pass := a.credentials()
 	peer := protocol.NewPeerProvider(func() (string, error) { return a.peerValue() })
 	form := protocol.BuildLogin(user, pass, protocol.Settings{DualStack: a.DualStack, Form: a.Form}, peer)
 	bind := v6BindOf(a.DualStack, form)
-	resp, err := a.Deliver(form)
+	resp, err := deliver(form)
 	if err != nil {
 		return Outcome{V6: bind}, err
 	}

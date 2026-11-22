@@ -45,6 +45,10 @@ type daemonConfig struct {
 	FreeWindows   string
 	Username      string // 当前账号（多账号切换 = 改它 + 读对应凭据）
 	AutoReconnect bool   // 自动重连开关（false = 只探测报状态，不自动登录）
+	// MultiChannel 通道级自愈开关（2026-11-20 双通道 M2）：默认**关**
+	// （沿用 11-19「旁路只观察不登录」纪律）；开启后未认证的物理通道
+	// 各自登录，与主链路共用账号级预算（8 次/小时 + 30s 间隔）。
+	MultiChannel bool
 	BindIP        string // 物理源逃生口：手工指定 v4 源（空 = 自动发现）
 	// NetMode 门户选路模式（设计 §6）：auto=逐操作健康探测（绑源优先，绑源
 	// 解析失败转系统栈）；bound=只走物理栈钉 IP；system=只走系统栈（跟 TUN）。
@@ -193,6 +197,9 @@ func loadDaemonConfig(path string) (daemonConfig, error) {
 			c.DualStack = v == "true" || v == "1" || v == "on"
 		case "auto_reconnect":
 			c.AutoReconnect = !(v == "false" || v == "0" || v == "off")
+		case "multi_channel":
+			// 默认关：只有显式打开才启用通道级登录（保守方向）。
+			c.MultiChannel = v == "true" || v == "1" || v == "on"
 		case "bind_ip":
 			c.BindIP = v
 		case "net_mode":

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // Window 一段免认证窗口（分钟数 0-1439；跨午夜窗口 start > end）。
@@ -104,6 +105,24 @@ func (d *Daemon) inFreeWindow() bool {
 	ws := d.FreeWindows
 	d.mu.RUnlock()
 	return InFreeWindow(ws, d.LocalMinute())
+}
+
+// recheckOnFreeWindowEnd 免认证窗口结束的边沿处理（2026-11-20 排查实证）：
+// 窗口内门户不维护会话，结束后首拍若还在 60s 探针节流里，守护会误报在线
+// 最多 60 秒。而 Windows 的 NCSI 可能正好在这段"未认证窗口"抓到门户 302，
+// 把网络标记成"需要登录"→ 浏览器反复自动打开认证页（用户感知：莫名其妙
+// 弹页）。窗口刚结束：作废探针节流，立即核实会话，死则同拍登录。
+//
+// 调用方传当前拍是否在窗口内；本函数记住该值供下一拍做边沿检测。
+func (d *Daemon) recheckOnFreeWindowEnd(inFree bool) {
+	if d.wasFreeWindow && !inFree {
+		d.sessAt = time.Time{}
+		d.sessRedAt = time.Time{}
+		// 同一边沿也作废通道观察节流（2026-11-21 决议 D）：窗口内门户不
+		// 维护任何通道的会话，陈旧「已认证」读数会骗面板。nil 安全。
+		d.Channels.ForceProbe()
+	}
+	d.wasFreeWindow = inFree
 }
 
 // SetFreeWindows 热更新免认证时段（面板保存即时生效；Tick 只读锁快照）。

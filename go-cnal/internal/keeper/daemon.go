@@ -1,57 +1,14 @@
 package keeper
 
 import (
-	"errors"
 	"sync"
 	"sync/atomic"
 	"time"
 )
 
-// ErrRateCapped 速率闸门关闭（app 层哨兵）：Python 对此显示 offline（非 rejected），
-// 内核据此区分「门户回绝」与「本地预算用尽」两种不同语义。
-var ErrRateCapped = errors.New("速率闸门")
-
-// freeDetectStreak 连续 N 次「锚点绿+登录不受理」即判定免会话态
-// （Python FREE_DETECT_STREAK：第一性原理，免认证时段可直接观测）。
-const freeDetectStreak = 2
-
-// 状态名与 Python 守护对齐（跨实现互裁，同语料同语义）。
-const (
-	StateOnline     = "online"
-	StateOffline    = "offline"
-	StatePortalDown = "portal_down"
-	StateFreeWindow = "free_window"
-	// StateRejected 登录节流/退避/熔断中的展示态（Python 守护同名词表）。
-	StateRejected = "rejected"
-	// StatePaused 自动重连开关关闭时的展示态：只探测报状态，不自动登录
-	//（Python set_state("paused","自动重连已关闭") 同语义）。
-	StatePaused = "paused"
-)
-
-// 登录风暴三闸参数（Python tick 同源值：LOGIN_MIN_INTERVAL=30、suspect 上限 3；
-// 退避默认值 reject_backoff=600 / transient_backoff=30，异校可在 ini 覆盖）。
-// 外加 SESSION_FALSE 自停闸：矛盾上限 3、自停 3600s。
-const (
-	loginMinInterval        = 30 * time.Second
-	defaultRejectBackoff    = 600 * time.Second
-	defaultTransientBackoff = 30 * time.Second
-	// transientStreakLimit 瞬态错误连续 N 次升级为长退避（Python
-	// handle_rejection：transient_streak >= 5 → reject_backoff）。
-	transientStreakLimit = 5
-	suspectLimit         = 3
-	sessFalseLimit       = 3
-	sessFalseDisable     = 3600 * time.Second
-	// v6ProbeInterval v6 四态观察节流（同 Python L2_PROBE_S 量级）。
-	v6ProbeInterval = 60 * time.Second
-	// sessionProbeInterval L3 会话探针节流（Python SESSION_PROBE_S=60 同源）：
-	// tick 间隔可低至 1s（用户可配），不节流就是每秒一次 userflux——
-	// 2026-11-10 实测 5 拍 5 次请求、2s 即判死（规格 §12「与 60s 的 L2/L3 同拍」）。
-	sessionProbeInterval = 60 * time.Second
-	// offlineLoginDebounce L1 连续失败去抖（2026-11-13 登录风暴实证）：探测
-	// 节拍可低至 1s（用户可配），不节流就是每秒一次锚点探测；单拍超时不应
-	// 触发登录，避免登录风暴撞校园反暴力冻结线（校园实测 12 次/小时）。
-	offlineLoginDebounce = 3
-)
+// 内核参数与状态词常量住在 params.go（2026-11-22 拆分，守 2 万字节提交闸）；
+// 免认证时段方法在 freewindow.go；展示字段读写与开关交接在 daemon_view.go；
+// 动作时间线在 daemon_action.go——语义归属见各文件头。
 
 // Daemon 守护内核骨架：探测缝可替换（测试不触网）；登录/会话判死在
 // Task G3/G4 接入，UI/托盘/打包在切片三。
@@ -93,16 +50,16 @@ type Daemon struct {
 	// UserPath 用户路径读数（系统栈，与浏览器同路；nil = 未接线，显示未知）。
 	// 只做展示，绝不参与判定——TUN/代理下它反映用户实际体验，不是认证真值。
 	UserPath func() PathReading
-	// ProbeSiblingAuth 非绑定物理源的认证态观察（nil = 未接线）。
-	// 返回「已连接但未认证」的源 IP（空 = 无/未知）。多网卡实证（2026-11-19）：
-	// keeper 只维护一个绑定源，网线在未认证 VLAN 时永远不被触碰，面板也看不
-	// 出来——Windows 双网卡下「无 Internet」黄叹号就是这么来的。只观察，
-	// **绝不**在这些卡上登录（登录出口仍只有当前绑定源一条）。
-	ProbeSiblingAuth func() []string
 	// OnFluxWarn 流量越阈事件缝（只读、零副作用）：每个阈值档在进程生命周期内
 	// 只回调一次，带档位与用量视图。壳层据此发托盘气泡/安卓通知；内核不弹窗、
 	// 不改自动连、不断网。nil = 不发。
 	OnFluxWarn func(level string, view FluxUsageView)
+	// Channels 多通道观察器（2026-11-20 双通道方案 M1）：nil = 不观察。
+	// 只观察、零凭据——通道级登录是 M2，且默认关（spec §8.2）。
+	Channels *ChannelGuard
+	// ChannelLogin 通道级登录缝（M2）：对指定通道发起登录（绑该通道源 IP）。
+	// nil = 未接线（不动作）。与主链路 Login 共用账号级闸门（见 channel_login.go）。
+	ChannelLogin ChannelLoginFn
 
 	// 对外暴露的展示字段：Tick goroutine 写，回路 API Snapshot / 托盘 tick
 	// goroutine 读——用 mu 护住（2026-11-08 发布审查 P0：只有 autoReconnect
@@ -121,11 +78,32 @@ type Daemon struct {
 	freeText string
 	// userPath 用户路径读数（系统栈；mu 护住，Tick 写、面板/托盘读）。
 	userPath PathReading
+	// lastAction 最近一次守护动作（2026-11-21 产品优化决议 C）：断网排查时
+	// 用户第一眼要知道守护动没动过。写入点含 API goroutine（切账号），
+	// 加锁读写（方法对在 daemon_action.go）。
+	lastAction struct {
+		Kind string
+		At   time.Time
+	}
 
 	// autoReconnect 自动重连开关（Python auto_reconnect 同语义）：false = 只探测
 	// 报状态、不自动登录（手动重连走独立路径不受限）。默认开。并发：Tick 在后台
 	// goroutine 读、面板/托盘开关在回路 goroutine 写 → 原子（读写走方法对）。
 	autoReconnect atomic.Bool
+	// multiChannel 通道级自愈开关（2026-11-20 双通道 M2）：默认**关**
+	// （沿用 11-19「旁路只观察不登录」的保守纪律）。开启后通道登录与主链路
+	// 共用账号级预算（见 channel_login.go）。
+	multiChannel atomic.Bool
+	// channelLastLogin 各通道最近一次登录尝试时刻（同一通道的最小尝试间隔）。
+	// 与主链路的 lastLogin 分开：主链路的 30s 闸是账号级共享的，这里的
+	// 60s 是「别让一条抖动通道反复烧预算」的通道级护栏。
+	channelLastLogin map[string]time.Time
+	// channelReject/channelFrozen 通道级退避与冻结闸（账号级：门户拒的是账号，
+	// 任一通道被拒，所有通道一起退避）。与主链路的 rejectUntil/frozenUntil
+	// **分账**：主链路的「会话仍活」分支会清 rejectUntil，会连带抹掉通道的
+	// 退避（2026-11-20 实现时踩到：退避刚设上就被抹，通道继续撞门户）。
+	channelReject time.Time
+	channelFrozen time.Time
 
 	// Now 时钟缝（节流/退避测试可控；默认 time.Now）。
 	Now func() time.Time
@@ -154,15 +132,36 @@ type Daemon struct {
 	l2At          time.Time   // 上次 L2 观察时刻（60s 节流）
 	sessAt        time.Time   // 上次会话探针时刻（60s 节流）
 	sessRedAt     time.Time   // L1 红时会话核实时刻（10s 下限）
+	// wasFreeWindow 上一拍的免认证窗口状态（边沿检测）：窗口刚结束的首拍
+	// 作废探针节流，立即核实会话——否则会误报在线最多 60 秒（2026-11-20）。
+	wasFreeWindow bool
 	sessRedKnown  bool        // L1 红时会话真值是否可得
 	sessRedAlive  bool        // L1 红时最近一次会话真值
 	userPathAt    time.Time   // 上次用户路径探测时刻（5s 节流）
-	siblingAt     time.Time   // 上次旁路网卡观察时刻（60s 节流）
-	siblingBusy   atomic.Bool // 旁路网卡探测在飞（单飞：慢探测不叠加）
-	siblingUnauth []string    // 最近一次观察到的「已连接但未认证」源（mu 护住）
+	// userPathSince 本轮用户路径红起点（0 = 不在异常中）。混合纪律：跨
+	// goroutine 读者（fakeOnline）走锁；Tick 内读者（onlineDetail/userPathDetail）
+	// 裸读——勿把这些函数迁出 Tick goroutine（2026-11-22 修复项 2 起 mu 护住）。
+	// ≥5 分钟才上浮在线态互证附注（决议 B，见 daemon_probe.go）。
+	userPathSince time.Time
 	l2Restricted  bool        // 最近一次 L2 观察结果
 	l2WindowUntil time.Time   // L2 受限提示保留窗口（恢复后仍提示 2×周期）
+	l2Since       time.Time   // 本轮 L2 受限起点（0 = 不在受限中；锁纪律同 userPathSince）
+	// dnsBroken 族：L2 同栈对照发现「校园 DNS 给不可用解析结果」的可见态
+	//（2026-11-22 复盘内因 1：campus_dns 返回假 IP → 钉假 IP TLS 必死 →
+	// 4.5h 假警报，与真·AC 拉黑混为一谈）。记账与 l2 族对称，锁纪律同上。
+	dnsBroken       bool      // 最近一次 L2 同栈对照：校园 DNS 解析异常
+	dnsBrokenWindow time.Time // 提示保留窗口（恢复后仍提示 2×周期，同 l2WindowUntil）
+	dnsBrokenSince  time.Time // 本轮起点（0 = 不在异常中）
+	// l1RedSessionAlive 锚点红+会话绿在线态的结构化标记：setStateL1Red 置位、
+	// setState 清位——health.go 的 Reason 判定不再 Contains(detail,"锚点异常")
+	// 文本反推（文案即接口的脆弱反推，2026-11-22 复盘修复项 2 根治）。
+	l1RedSessionAlive bool
 	offlineStreak int         // L1 连续失败拍数（登录去抖；锚点绿即清零）
+	// 休眠观察（2026-11-21 决议 A；语义与阈值在 daemon_dormant.go）：portal_down
+	// 长期持续（蜂窝热点形态）时降频观察，不再每拍探测+每拍重选白烧。
+	portalDownSince time.Time // 本轮 portal_down 起点（Tick 同 goroutine 读写）
+	portalAliveAt   time.Time // 门户探针节流起点（休眠期 ≥60s 一探）
+	dormant         bool      // 休眠观察中：停重选回调、探针降频
 
 	// 流量轮询（只读能力）：10 分钟节流查一次 userflux，供面板常驻显示与
 	// 越阈提醒。与会话判死的 flux 探针**分开**——那是 60s 一拍的账号级存活
@@ -170,8 +169,14 @@ type Daemon struct {
 	fluxPollInterval time.Duration
 	fluxAt           time.Time // 上次为「流量视图」主动查询的时刻（10 分钟节流）
 	fluxQueriedAt    time.Time // 本轮任意来源拿到 flux 数据的时刻（复用，避免一拍两查）
-	fluxView         FluxUsageView
-	fluxWarner       *fluxWarner
+	fluxView   FluxUsageView
+	fluxWarner *fluxWarner
+	// fluxReset 作废流量视图的跨 goroutine 请求（切账号后旧读数不得续显）。
+	// fluxPending 外部实时快照交接槽（StoreFluxView 挂入，pollFlux 落账）。
+	// 两者都只把跨 goroutine 动作收进原子结构，清空/落账全在 Tick 做——
+	// fluxAt/fluxQueriedAt 始终只有 Tick 一个写者（P0-1：裸写可崩）。
+	fluxReset   atomic.Bool
+	fluxPending atomic.Pointer[map[string]string]
 
 	sessMiss   int
 	freeStreak int
@@ -188,30 +193,11 @@ func NewDaemon(freeWindows string) *Daemon {
 		transientBackoff: defaultTransientBackoff,
 		fluxPollInterval: defaultFluxPollInterval,
 		fluxWarner:       newFluxWarner(defaultFluxWarnAt, defaultFluxCriticalAt),
+		channelLastLogin:  map[string]time.Time{},
 	}
 	d.autoReconnect.Store(true) // Python DEFAULTS auto_reconnect=true
 	return d
 }
-
-// SetResponseMarks 覆盖响应词表（[response] 配置面；只在 Tick 启动前调用）。
-func (d *Daemon) SetResponseMarks(m ResponseMarks) { d.marks = m.withDefaults() }
-
-// SetBackoff 覆盖退避参数（ini reject_backoff/transient_backoff；<=0 保持默认）。
-// 只在 Tick 启动前调用——启动后改要另做同步，当前面板没有这两个键的热改。
-func (d *Daemon) SetBackoff(reject, transient time.Duration) {
-	if reject > 0 {
-		d.rejectBackoff = reject
-	}
-	if transient > 0 {
-		d.transientBackoff = transient
-	}
-}
-
-// SetAutoReconnect 切换自动重连开关（面板/托盘写，Tick 读——原子交接）。
-func (d *Daemon) SetAutoReconnect(on bool) { d.autoReconnect.Store(on) }
-
-// AutoReconnectOn 当前开关状态（快照/菜单勾选回显）。
-func (d *Daemon) AutoReconnectOn() bool { return d.autoReconnect.Load() }
 
 // Tick 走一拍探测-判态循环（语义对齐 Python keeper.tick 探测层）。
 func (d *Daemon) Tick() {
@@ -219,11 +205,20 @@ func (d *Daemon) Tick() {
 	d.probeV6()
 	d.probeL2()
 	d.probeUserPath()
-	d.probeSiblings()
+	// 免认证窗口结束的边沿：作废探针节流立即核实（语义在 freewindow.go）。
+	// 先于通道观察：同一边沿也要作废通道节流（2026-11-21 决议 D），否则
+	// 边沿那一拍通道先被 60s 节流拦下，重探要再等一拍。
+	d.recheckOnFreeWindowEnd(d.inFreeWindow())
+	// 多通道观察同样脱离判定：它是「别的卡是什么状态」的事实，与主链路
+	// 在线与否无关；探测异步跑，不拖心跳（见 channel.go）。
+	d.Channels.tick()
 	l1 := d.ProbeOnline()
 	if l1 {
 		d.offlineStreak = 0
 		d.sessRedAt = time.Time{} // L1 恢复即作废红态缓存：下次红拍重新核实
+		// 锚点绿 = 离开 portal_down 形态（决议 A 的恢复条件之一）：
+		// 清休眠观察，恢复正常节拍（热点上锚点可达则根本不该休眠）。
+		d.leavePortalDown()
 	} else {
 		d.offlineStreak++
 	}
@@ -234,7 +229,12 @@ func (d *Daemon) Tick() {
 		d.pollFlux()
 		_, _, _, sessionDead, _ := d.View()
 		if !sessionDead {
-			d.setState(StateOnline, d.onlineDetail())
+			// 通道级自愈（2026-11-20 双通道 M2）：**主链路健康时**才轮到通道。
+			// 30s 闸门只有一份，预算归主——主链路掉线时若通道抢闸，主恢复
+			// 会被拖慢 30 秒；11-20 的场景本来就是「WiFi 在线、有线未认证」，
+			// 反过来（主掉线时通道先登）没有对应场景。
+			d.tryChannelLogin(d.Now())
+			d.setState(StateOnline, d.onlineDetail(true))
 			return
 		}
 		// 假在线封堵：锚点绿但会话死（t37）→ 落到重连路径（G4 接登录）
@@ -242,17 +242,21 @@ func (d *Daemon) Tick() {
 	// 服务出口门槛先于一切登录动作（2026-11-18 三连登录实证）：本地绑定
 	// 失效或绑源到不了门户时，登录只会走到另一条路（系统栈）——探针永远
 	// 不绿、预算白烧、还会触发自伤熔断。先报状态，让组合根重选出口。
-	portalAlive := d.PortalAlive()
+	// 探针在休眠观察期降频（决议 A，语义在 daemon_dormant.go）。
+	portalAlive := d.portalAliveThrottled()
 	if eg := d.egress(); !eg.Valid {
 		if d.inFreeWindow() {
 			d.setState(StateFreeWindow, "免认证时段（无需登录）")
 			return
 		}
 		if eg.Reason == EgressPortalUnreachable {
-			if d.OnPortalDown != nil {
+			d.portalDownTick() // 记拍 + 休眠判定（决议 A）
+			// 休眠观察期停调重发现：门户持续不可达 10 分钟后每拍重选只是
+			// 在热点上乱跳白烧（2026-11-21 09:52 实证）。
+			if !d.dormant && d.OnPortalDown != nil {
 				d.OnPortalDown()
 			}
-			d.setState(StatePortalDown, egressDetail(eg))
+			d.setState(StatePortalDown, d.portalDownDetail(egressDetail(eg)))
 			return
 		}
 		if d.OnEgressInvalid != nil {
@@ -266,13 +270,17 @@ func (d *Daemon) Tick() {
 			d.setState(StateFreeWindow, "免认证时段（无需登录）")
 			return
 		}
-		// 重发现时机交给组合根（Python P2-8：旧自动发现的源会失效）。
-		if d.OnPortalDown != nil {
+		d.portalDownTick() // 记拍 + 休眠判定（决议 A）
+		// 重发现时机交给组合根（Python P2-8：旧自动发现的源会失效）；
+		// 休眠观察期停调（同上）。
+		if !d.dormant && d.OnPortalDown != nil {
 			d.OnPortalDown()
 		}
-		d.setState(StatePortalDown, "")
+		d.setState(StatePortalDown, d.portalDownDetail(""))
 		return
 	}
+	// 门户探针转绿的第一拍：清休眠观察，恢复正常节拍（决议 A 的恢复判定）。
+	d.leavePortalDown()
 	// 自动重连开关（Python 同序：portal_down 之后、免认证/自动登录之前）：
 	// 关 = 只探测报状态，不自动登录。手动重连走独立路径（app 层）不受限。
 	if !d.autoReconnect.Load() {
@@ -302,7 +310,7 @@ func (d *Daemon) Tick() {
 		if dead, known := d.probeSessionOnL1Red(now); known {
 			if !dead {
 				d.offlineStreak = 0
-				d.setState(StateOnline, d.sessionAliveL1RedDetail())
+				d.setStateL1Red(d.sessionAliveL1RedDetail())
 				return
 			}
 			// 会话真值是权威证据：跳过 L1 三拍去抖，直接进登录闸。
@@ -333,26 +341,6 @@ func (d *Daemon) Tick() {
 }
 
 // 免认证时段的三个方法（inFreeWindow / SetFreeWindows / FreeWindowsText）
-// 住在 freewindow.go——那里是时段语义的归属，也让本文件守住 20KB 提交闸。
-
-func (d *Daemon) setState(state, detail string) {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-	d.State = state
-	d.Detail = detail
-}
-
-// View 展示字段快照（回路 API / 托盘用）：加锁读，与 Tick 的 setState 写配对。
-// 值拷贝返回，调用方拿到的不再是共享内存。
-func (d *Daemon) View() (state, detail, v6State string, sessionDead, freeMode bool) {
-	d.mu.RLock()
-	defer d.mu.RUnlock()
-	return d.State, d.Detail, d.V6State, d.SessionDead, d.FreeMode
-}
-
-// StateForUI 只要状态名（托盘 tick 循环判迁移用，避免裸读共享字段）。
-func (d *Daemon) StateForUI() string {
-	d.mu.RLock()
-	defer d.mu.RUnlock()
-	return d.State
-}
+// 住在 freewindow.go——那里是时段语义的归属；展示字段读写与开关交接在
+// daemon_view.go；动作时间线（决议 C）在 daemon_action.go——都是守 20KB
+// 提交闸的拆分，语义归属见各文件头。

@@ -1,6 +1,6 @@
-# go-cnal（Go 重写校园网登录引擎）
+# go-cnal（Go 校园网登录引擎）
 
-Python 守护（`../campus-net-autologin`）的 Go 重写：ac_portal 族协议、物理栈探测、
+校园网守护主实现：ac_portal 族协议、物理栈探测、
 双栈登录、守护状态机。**Windows 侧已换役服役**（cnalw 托盘 + 自启）。
 
 完整实测故事已迁至 `docs/AGENTS-坑位实测故事.md`（逐字保留）；本表只留「规则 → 由什么拦住」。

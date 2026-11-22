@@ -254,9 +254,8 @@ func onTrayReady(a *app.App) func() {
 						} else {
 							systray.SetIcon(ico)
 						}
-						line := statusLine(snap)
-						systray.SetTooltip(line)
-						mState.SetTitle(line)
+						systray.SetTooltip(tooltipLine(snap)) // 全量读数（排查第一现场）
+						mState.SetTitle(statusLine(snap))     // 菜单行短形态（2026-11-22 修复项 4）
 						if a.Daemon.AutoReconnectOn() {
 							mAutoConn.Check()
 						} else {

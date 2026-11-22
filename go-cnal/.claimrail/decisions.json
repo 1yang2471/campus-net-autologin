@@ -1,568 +1,272 @@
 {
- "schema": 1,
- "task_class": "api-design",
- "forks": [
-  {
-   "fork": "scripts/a3-batterystats.sh 无设备时是否报错（A3 终点快照）",
-   "options": [
+  "schema": 1,
+  "task_class": "docs-new",
+  "forks": [
     {
-     "label": "增加 require_device 运行时检查：adb devices 为空时记录“设备未连接”、退出码 0、不报错",
-     "target": {
-      "file": "scripts/a3-batterystats.sh",
-      "symbol": "require_device"
-     }
+      "fork": "M0 测量锚点 connect.rom.miui.com 的白名单效度面：照 Windows 刀 1 变体序改造还是文档化边界（2026-11-21 移植复盘）",
+      "options": [
+        {
+          "label": "改造 M0 探针：裸 IP 对照变体 + 判定口径重定义",
+          "target": {
+            "file": "go-cnal-android/app/src/main/java/dev/cnal/m0/ProbeRunner.kt"
+          }
+        },
+        {
+          "label": "文档化边界：404→OFFLINE 保守判定在参考校 404 形态下读对，A1-A5 判据口径不动",
+          "target": {
+            "file": "go-cnal-android/docs/2026-11-21-windows-fixes-android-port.md"
+          }
+        }
+      ],
+      "picked": "文档化边界：404→OFFLINE 保守判定在参考校 404 形态下读对，A1-A5 判据口径不动",
+      "evidence": {
+        "kind": "repo",
+        "ref": "go-cnal-android/app/src/main/java/dev/cnal/m0/ProbeLogic.kt:25",
+        "asserts": [
+          "else -> ProbeVerdict.OFFLINE"
+        ]
+      },
+      "target": {
+        "file": "go-cnal-android/docs/2026-11-21-windows-fixes-android-port.md",
+        "symbol": "M0 锚点白名单边界"
+      },
+      "cost_if_wrong": "high",
+      "verified": true
     },
     {
-     "label": "保持现状：set -euo pipefail 下 adb 无设备直接抛错退出",
-     "target": {
-      "file": "scripts/a3-batterystats.sh",
-      "symbol": "set -euo pipefail"
-     }
+      "fork": "运行态快照被 git 跟踪，Stop 钩子自写快照即改 treeHash，stale 永久自指误拦（.gitignore 明写只留本机）",
+      "options": [
+        {
+          "label": "保持跟踪：每轮 hook 自写快照后都要重改台账消 stale",
+          "target": {
+            "file": ".claimrail/last-delivery.json"
+          }
+        },
+        {
+          "label": "按 .gitignore 约定退出跟踪（git rm --cached），快照与记忆 log 只留本机",
+          "target": {
+            "file": ".gitignore"
+          }
+        }
+      ],
+      "picked": "按 .gitignore 约定退出跟踪（git rm --cached），快照与记忆 log 只留本机",
+      "evidence": {
+        "kind": "repo",
+        "ref": "go-cnal/.gitignore:14",
+        "asserts": [
+          "只在本机，不进 git"
+        ]
+      },
+      "target": {
+        "file": ".gitignore",
+        "symbol": "claimrail 本机状态约定"
+      },
+      "cost_if_wrong": "low",
+      "verified": true
+    },
+    {
+      "fork": "免认证窗口边沿后通道重探落在哪一拍（2026-11-21 决议 D）",
+      "options": [
+        {
+          "label": "边沿同拍重探：recheckOnFreeWindowEnd 提到 Channels.tick 之前，边沿那一拍作废节流并立即重探",
+          "target": {
+            "file": "internal/keeper/daemon.go",
+            "symbol": "Tick"
+          }
+        },
+        {
+          "label": "边沿下一拍才重探：保持 Channels.tick 在前，ForceProbe 只让后续拍生效（陈旧读数多活一拍）",
+          "target": {
+            "file": "internal/keeper/channel.go",
+            "symbol": "ForceProbe"
+          }
+        }
+      ],
+      "picked": "边沿同拍重探：recheckOnFreeWindowEnd 提到 Channels.tick 之前，边沿那一拍作废节流并立即重探",
+      "evidence": {
+        "kind": "repo",
+        "ref": "go-cnal/internal/keeper/freewindow.go:114",
+        "asserts": [
+          "立即核实会话",
+          "同拍登录"
+        ]
+      },
+      "target": {
+        "file": "internal/keeper/daemon.go",
+        "symbol": "Tick"
+      },
+      "cost_if_wrong": "low",
+      "verified": true
+    },
+    {
+      "fork": "守护动作时刻怎么暴露给快照装配（2026-11-21 决议 C）",
+      "options": [
+        {
+          "label": "新公开只读方法 LastAction()：View 签名不动，快照闭包单独取读数",
+          "target": {
+            "file": "internal/keeper/daemon_action.go",
+            "symbol": "LastAction"
+          }
+        },
+        {
+          "label": "扩展 View() 返回值：动作字段并进既有快照读数（牵连全部调用方含 mobile）",
+          "target": {
+            "file": "internal/keeper/daemon.go",
+            "symbol": "View"
+          }
+        }
+      ],
+      "picked": "新公开只读方法 LastAction()：View 签名不动，快照闭包单独取读数",
+      "evidence": {
+        "kind": "repo",
+        "ref": "go-cnal/internal/keeper/daemon_probe.go:200-204",
+        "asserts": [
+          "可见缝",
+          "加锁读"
+        ]
+      },
+      "target": {
+        "file": "internal/keeper/daemon_action.go",
+        "symbol": "LastAction"
+      },
+      "cost_if_wrong": "low",
+      "verified": true
+    },
+    {
+      "fork": "免认证窗口内的门户不可达是否累计休眠计时（2026-11-21 决议 A）",
+      "options": [
+        {
+          "label": "不累计：窗口内分支先于记拍返回（预期形态不算「持续不可达」证据）",
+          "target": {
+            "file": "internal/keeper/daemon_dormant.go",
+            "symbol": "portalDownTick"
+          }
+        },
+        {
+          "label": "累计：窗口内也记拍，出窗首拍可能立即休眠（窗口外的连续性按墙钟算）",
+          "target": {
+            "file": "internal/keeper/daemon_dormant.go",
+            "symbol": "portalDownDormantAfter"
+          }
+        }
+      ],
+      "picked": "不累计：窗口内分支先于记拍返回（预期形态不算「持续不可达」证据）",
+      "evidence": {
+        "kind": "repo",
+        "ref": "go-cnal/internal/keeper/daemon_rediscover_test.go:25",
+        "asserts": [
+          "免认证窗口内门户不可达是常态",
+          "不得报告重发现"
+        ]
+      },
+      "target": {
+        "file": "internal/keeper/daemon_dormant.go",
+        "symbol": "portalDownTick"
+      },
+      "cost_if_wrong": "low",
+      "verified": true
+    },
+    {
+      "fork": "last_action_at 的契约形态（2026-11-21 决议 C，api.Snapshot）",
+      "options": [
+        {
+          "label": "time.Time 值字段 + omitempty：零时刻仍会序列化，面板以 last_action 空为准（任务规格字面形态）",
+          "target": {
+            "file": "internal/api/api.go",
+            "symbol": "Snapshot"
+          }
+        },
+        {
+          "label": "*time.Time 指针 + omitempty：无动作时真省略（Flux 字段同款，但装配侧多一层取址）",
+          "target": {
+            "file": "internal/api/api.go",
+            "symbol": "Snapshot"
+          }
+        }
+      ],
+      "picked": "time.Time 值字段 + omitempty：零时刻仍会序列化，面板以 last_action 空为准（任务规格字面形态）",
+      "evidence": {
+        "kind": "repo",
+        "ref": "go-cnal/internal/api/api.go:134",
+        "asserts": [
+          "Flux",
+          "omitempty"
+        ]
+      },
+      "target": {
+        "file": "internal/api/api.go",
+        "symbol": "Snapshot"
+      },
+      "cost_if_wrong": "low",
+      "verified": true
+    },
+    {
+      "fork": "daemon.go 守 2 万字节提交闸拆什么（2026-11-21，B/C/A 三项都要动 Daemon 结构体）",
+      "options": [
+        {
+          "label": "对外交接面拆 daemon_view.go + 启动前 setter 归语义文件（marks/ratelimit/daemon_login）",
+          "target": {
+            "file": "internal/keeper/daemon_view.go",
+            "symbol": "View"
+          }
+        },
+        {
+          "label": "Tick 门户段整体挪 daemon_dormant.go（更大重构，状态机骨架被切开两处）",
+          "target": {
+            "file": "internal/keeper/daemon.go",
+            "symbol": "Tick"
+          }
+        }
+      ],
+      "picked": "对外交接面拆 daemon_view.go + 启动前 setter 归语义文件（marks/ratelimit/daemon_login）",
+      "evidence": {
+        "kind": "repo",
+        "ref": "go-cnal/internal/keeper/daemon_probe.go:5-6",
+        "asserts": [
+          "从 daemon.go 拆出",
+          "提交闸"
+        ]
+      },
+      "target": {
+        "file": "internal/keeper/daemon_view.go",
+        "symbol": "View"
+      },
+      "cost_if_wrong": "low",
+      "verified": true
+    },
+    {
+      "fork": "弹窗治理章节放仓库根 README 哪个位置（2026-11-21 决议 E，docs-new）",
+      "options": [
+        {
+          "label": "「代理与加速器共存」与「常见问题」之间：网络环境类章节尾部，排查语境先读",
+          "target": {
+            "file": "README.md",
+            "symbol": "常见问题"
+          }
+        },
+        {
+          "label": "功能介绍后（「为什么需要它」附近）：与能力清单同区，但治理三层更偏故障排查语境",
+          "target": {
+            "file": "README.md",
+            "symbol": "为什么需要它"
+          }
+        }
+      ],
+      "picked": "「代理与加速器共存」与「常见问题」之间：网络环境类章节尾部，排查语境先读",
+      "evidence": {
+        "kind": "repo",
+        "ref": "README.md:236-247",
+        "asserts": [
+          "代理与加速器共存",
+          "Clash API 联动"
+        ]
+      },
+      "target": {
+        "file": "README.md",
+        "symbol": "常见问题"
+      },
+      "cost_if_wrong": "low",
+      "verified": true
     }
-   ],
-   "picked": "增加 require_device 运行时检查：adb devices 为空时记录“设备未连接”、退出码 0、不报错",
-   "evidence": {
-    "kind": "memory",
-    "ref": "log#25",
-    "asserts": [
-     "设备未连接",
-     "退出码 0",
-     "不报错"
-    ]
-   },
-   "target": {
-    "file": "scripts/a3-batterystats.sh",
-    "symbol": "require_device"
-   },
-   "cost_if_wrong": "low",
-   "verified": true
-  },
-  {
-   "fork": "A1 踢线恢复轮判过不过（2026-11-14 白天补测，弱形态判据收尾）",
-   "options": [
-    {
-     "label": "过：v4 恢复 113s（10:27:00 注销 → 10:28:53 在线，≤5min 判据）；发现路径=兜底拍+会话判死 1 拍直通，去抖未拖慢；v6 地址未换、会话门户侧恢复（非守护所为）；息屏态踢线未覆盖如实披露",
-     "target": {
-      "file": "docs/a1-result-2026-11-13.md",
-      "symbol": "踢线恢复轮"
-     }
-    },
-    {
-     "label": "不过：恢复超 5min 或无自动重连证据，降级条款处理",
-     "target": {
-      "file": "docs/android-a1-a5-testplan.md",
-      "symbol": "§1 降级"
-     }
-    }
-   ],
-   "picked": "过：v4 恢复 113s（10:27:00 注销 → 10:28:53 在线，≤5min 判据）；发现路径=兜底拍+会话判死 1 拍直通，去抖未拖慢；v6 地址未换、会话门户侧恢复（非守护所为）；息屏态踢线未覆盖如实披露",
-   "evidence": {
-    "kind": "memory",
-    "ref": "log#23",
-    "asserts": [
-     "v4 于 10:28:53 恢复（113 秒 ≤5min 判据）",
-     "会话判死 1 拍直通",
-     "v6 地址未换",
-     "息屏态踢线未覆盖如实披露"
-    ]
-   },
-   "target": {
-    "file": "docs/a1-result-2026-11-13.md",
-    "symbol": "踢线恢复轮"
-   },
-   "cost_if_wrong": "low",
-   "verified": true
-  },
-  {
-   "fork": "v6 会话恢复归因（2026-11-14 踢线轮证据确认）",
-   "options": [
-    {
-     "label": "门户侧按 MAC 自动恢复：用户确认未手动操作、守护无自动 rebind 路径（自动重连只登 v4）；v4 重登后 ≤5min 内 v6 会话自行回来，地址未换",
-     "target": {
-      "file": "docs/a1-result-2026-11-13.md",
-      "symbol": "踢线恢复轮·v6 行"
-     }
-    },
-    {
-     "label": "用户手动重新登录过 v6（与用户陈述矛盾，排除）",
-     "target": {
-      "file": "docs/a1-result-2026-11-13.md",
-      "symbol": "踢线恢复轮"
-     }
-    },
-    {
-     "label": "守护自动 rebind（代码无此路径，排除）",
-     "target": {
-      "file": "internal/app/compose_daemon.go",
-      "symbol": "RebindV6 仅面板动作缝"
-     }
-    }
-   ],
-   "picked": "门户侧按 MAC 自动恢复：用户确认未手动操作、守护无自动 rebind 路径（自动重连只登 v4）；v4 重登后 ≤5min 内 v6 会话自行回来，地址未换",
-   "evidence": {
-    "kind": "memory",
-    "ref": "log#24",
-    "asserts": [
-     "用户确认踢线后未手动操作",
-     "守护无自动 rebind 代码路径",
-     "门户侧按 MAC 自动恢复 v6 会话"
-    ]
-   },
-   "target": {
-    "file": "docs/a1-result-2026-11-13.md",
-    "symbol": "踢线恢复轮·v6 行"
-   },
-   "cost_if_wrong": "low",
-   "verified": true
-  },
-  {
-   "fork": "运行态快照被 git 跟踪，Stop 钩子自写快照即改 treeHash，stale 永久自指误拦（.gitignore 明写只留本机）",
-   "options": [
-    {
-     "label": "保持跟踪：每轮 hook 自写快照后都要重改台账消 stale",
-     "target": {
-      "file": ".claimrail/last-delivery.json"
-     }
-    },
-    {
-     "label": "按 .gitignore 约定退出跟踪（git rm --cached），快照与记忆 log 只留本机",
-     "target": {
-      "file": ".gitignore"
-     }
-    }
-   ],
-   "picked": "按 .gitignore 约定退出跟踪（git rm --cached），快照与记忆 log 只留本机",
-   "evidence": {
-    "kind": "repo",
-    "ref": ".gitignore:14-15",
-    "asserts": [
-     "只在本机，不进 git"
-    ]
-   },
-   "target": {
-    "file": ".gitignore",
-    "symbol": "claimrail 本机状态约定"
-   },
-   "cost_if_wrong": "low",
-   "verified": true
-  },
-  {
-   "fork": "A2+A3 合并过夜轮判过不过（2026-11-17 00:41-08:06）",
-   "options": [
-    {
-     "label": "A3 过：息屏段 0.65 %/h（≤3% 余量 4.6×）；A2 有条件过：FGS 整夜存活，两项不适用；弱形态闭环坐实",
-     "target": {
-      "file": "docs/a2a3-result-2026-11-17.md",
-      "symbol": "一句话结论"
-     }
-    },
-    {
-     "label": "不过：电耗超 3%/h 或服务被杀，按 testplan 降级矩阵处理",
-     "target": {
-      "file": "docs/android-a1-a5-testplan.md",
-      "symbol": "§7"
-     }
-    }
-   ],
-   "picked": "A3 过：息屏段 0.65 %/h（≤3% 余量 4.6×）；A2 有条件过：FGS 整夜存活，两项不适用；弱形态闭环坐实",
-   "evidence": {
-    "kind": "memory",
-    "ref": "log#26",
-    "asserts": [
-     "0.65 %/h",
-     "≤3% 判据余量 4.6×",
-     "FGS 整夜存活",
-     "弱形态闭环",
-     "log#18 选项 2（稳态持锁换逐拍）被数据否证"
-    ]
-   },
-   "target": {
-    "file": "docs/a2a3-result-2026-11-17.md",
-    "symbol": "一句话结论"
-   },
-   "cost_if_wrong": "low",
-   "verified": true
-  },
-  {
-   "fork": "A4 VPN 出口核对判过不过（2026-11-18 真机 A/B 对照）",
-   "options": [
-    {
-     "label": "不过：Go native socket 被 TUN 整体抓走（无 protect），VPN 下绑源请求失败；v6 观察 S1 旁证一致",
-     "target": {
-      "file": "docs/a4-result-2026-11-18.md",
-      "symbol": "A/B 对照"
-     }
-    },
-    {
-     "label": "过：出口正确率 100%——被 A 组数据否决",
-     "target": {
-      "file": "docs/android-a1-a5-testplan.md",
-      "symbol": "§4"
-     }
-    }
-   ],
-   "picked": "不过：Go native socket 被 TUN 整体抓走（无 protect），VPN 下绑源请求失败；v6 观察 S1 旁证一致",
-   "evidence": {
-    "kind": "memory",
-    "ref": "log#27",
-    "asserts": [
-     "因果钉死",
-     "被 per-uid 路由整体抓进 TUN",
-     "S1 语义生效",
-     "待拍板"
-    ]
-   },
-   "target": {
-    "file": "docs/a4-result-2026-11-18.md",
-    "symbol": "A/B 对照"
-   },
-   "cost_if_wrong": "high",
-   "verified": true
-  },
-  {
-   "fork": "安卓版「做完」的验收线（2026-11-18 grill-me 五问）",
-   "options": [
-    {
-     "label": "VPN 暂停自动化做完+真机验证即完成；不做异校适配/v6 rebind",
-     "target": {
-      "file": "docs/2026-11-18-安卓版完成判据.md",
-      "symbol": "完成定义"
-     }
-    },
-    {
-     "label": "再加异校自助适配（未验证目标，README 已拍板不做）",
-     "target": {
-      "file": "README.md",
-      "symbol": "适用范围"
-     }
-    },
-    {
-     "label": "再加 v6 主动 rebind（门户已自动恢复会话，不存在的问题）",
-     "target": {
-      "file": "internal/keeper/login.go",
-      "symbol": "DoRebind"
-     }
-    }
-   ],
-   "picked": "VPN 暂停自动化做完+真机验证即完成；不做异校适配/v6 rebind",
-   "evidence": {
-    "kind": "memory",
-    "ref": "log#28",
-    "asserts": [
-     "实用=开梯子/WiFi↔蜂窝/免流/踢线四场景不添乱",
-     "通用=同一内核零改动跑三壳",
-     "用系统API判据不猜App"
-    ]
-   },
-   "target": {
-    "file": "docs/2026-11-18-安卓版完成判据.md",
-    "symbol": "完成定义"
-   },
-   "cost_if_wrong": "low",
-   "verified": true
-  },
-  {
-   "fork": "安卓 VPN 暂停自动化的真机验收（完成判据最后一块）",
-   "options": [
-    {
-     "label": "三态实测过即宣布完成：VPN 开暂停/关恢复，系统 TRANSPORT_VPN 判据证实",
-     "target": {
-      "file": "docs/2026-11-18-安卓版完成判据.md",
-      "symbol": "真机边沿验证"
-     }
-    },
-    {
-     "label": "不验证就宣布完成（违反判据先量再写，否决）",
-     "target": {
-      "file": "docs/2026-11-18-安卓版完成判据.md",
-      "symbol": "完成定义"
-     }
-    }
-   ],
-   "picked": "三态实测过即宣布完成：VPN 开暂停/关恢复，系统 TRANSPORT_VPN 判据证实",
-   "evidence": {
-    "kind": "memory",
-    "ref": "log#29",
-    "asserts": [
-     "10:24:18（VPN开/auto_reconnect=false/IPv6不可观测或代理接管）",
-     "TRANSPORT_VPN 系统事实判据成立",
-     "完成判据三态全过宣布完成"
-    ]
-   },
-   "target": {
-    "file": "docs/2026-11-18-安卓版完成判据.md",
-    "symbol": "真机边沿验证"
-   },
-   "cost_if_wrong": "low",
-   "verified": true
-  },
-  {
-   "fork": "公开发布评估怎么定（2026-11-18 grill-me 四问）",
-   "options": [
-    {
-     "label": "电脑版可公开（有条件）、安卓版不建议公开（列缺口）——按实测如实",
-     "target": {
-      "file": "docs/2026-11-18-公开发布评估.md",
-      "symbol": "逐问结论"
-     }
-    },
-    {
-     "label": "两端都可公开（把安卓缺口当\"以后再补\"，不放水则否决）",
-     "target": {
-      "file": "docs/2026-11-18-公开发布评估.md",
-      "symbol": "安卓版缺口"
-     }
-    },
-    {
-     "label": "都不可公开（安全扫描完整 0 发现+31/31 发布验证下过于保守，否决）",
-     "target": {
-      "file": "docs/2026-11-18-公开发布评估.md",
-      "symbol": "安全门"
-     }
-    }
-   ],
-   "picked": "电脑版可公开（有条件）、安卓版不建议公开（列缺口）——按实测如实",
-   "evidence": {
-    "kind": "memory",
-    "ref": "log#30",
-    "asserts": [
-     "16 包 0 发现",
-     "31/31 release_verify",
-     "安卓版不建议公开"
-    ]
-   },
-   "target": {
-    "file": "docs/2026-11-18-公开发布评估.md",
-    "symbol": "逐问结论"
-   },
-   "cost_if_wrong": "high",
-   "verified": true
-  },
-  {
-   "fork": "掉线发现用定时轮询还是事件驱动（用户要求被踢无感，3s 轮询与 A3 电耗冲突）",
-   "options": [
-    {
-     "label": "折中降频不动架构",
-     "target": {
-      "file": "mobile/mobile.go",
-      "symbol": "tickLoop"
-     }
-    },
-    {
-     "label": "真改事件驱动",
-     "target": {
-      "file": "mobile/mobile.go",
-      "symbol": "tickLoop"
-     }
-    },
-    {
-     "label": "先测量再决定",
-     "target": {
-      "file": "docs/android-a1-a5-testplan.md",
-      "symbol": "A3"
-     }
-    }
-   ],
-   "picked": "真改事件驱动",
-   "evidence": {
-    "kind": "memory",
-    "ref": "log#14",
-    "asserts": [
-     "掉线发现改事件驱动"
-    ]
-   },
-   "target": {
-    "file": "mobile/mobile.go",
-    "symbol": "tickLoop"
-   },
-   "cost_if_wrong": "high",
-   "verified": true
-  },
-  {
-   "fork": "A1-A5 全绿才收时，设备/环境阻塞项怎么处理",
-   "options": [
-    {
-     "label": "先做单方可验的",
-     "target": {
-      "file": "docs/2026-11-12-产品级验收第一性原理复盘.md",
-      "symbol": "queue"
-     }
-    },
-    {
-     "label": "全清单驱动全绿才收",
-     "target": {
-      "file": "docs/2026-11-12-产品级验收第一性原理复盘.md",
-      "symbol": "full-list"
-     }
-    },
-    {
-     "label": "先出差距清单再开工",
-     "target": {
-      "file": "docs/2026-11-12-产品级验收第一性原理复盘.md",
-      "symbol": "gap-list"
-     }
-    }
-   ],
-   "picked": "全清单驱动全绿才收",
-   "evidence": {
-    "kind": "memory",
-    "ref": "log#15",
-    "asserts": [
-     "A1-A5 全清单驱动，全绿才收"
-    ]
-   },
-   "target": {
-    "file": "docs/2026-11-12-产品级验收第一性原理复盘.md",
-    "symbol": "full-list"
-   },
-   "cost_if_wrong": "high",
-   "verified": true
-  },
-  {
-   "fork": "A1 观测轮窗口怎么落地（凌晨用户睡着无法踢线，测试计划 §1 原设计是单窗口含踢线）",
-   "options": [
-    {
-     "label": "单窗口含踢线（等用户醒着做满 30min）",
-     "target": {
-      "file": "docs/android-a1-a5-testplan.md",
-      "symbol": "A1"
-     }
-    },
-    {
-     "label": "拆分：凌晨定时观测窗口 + 白天踢线轮分别取证",
-     "target": {
-      "file": "scripts/a1-collect-m1-heartbeat.sh",
-      "symbol": "scheduled-mode"
-     }
-    }
-   ],
-   "picked": "拆分：凌晨定时观测窗口 + 白天踢线轮分别取证",
-   "evidence": {
-    "kind": "memory",
-    "ref": "log#16",
-    "asserts": [
-     "A1 观测轮拆成两个窗口",
-     "凌晨定时跑观测",
-     "白天醒着再补踢线恢复轮"
-    ]
-   },
-   "target": {
-    "file": "scripts/a1-collect-m1-heartbeat.sh",
-    "symbol": "scheduled-mode"
-   },
-   "cost_if_wrong": "low",
-   "verified": true
-  },
-  {
-   "fork": "定时模式跳过拔电现场确认（复盘 §4 要求轮次启动前现场复查电源状态，凌晨 adb 不可达做不到）",
-   "options": [
-    {
-     "label": "无法现场确认就作废窗口",
-     "target": {
-      "file": "docs/2026-11-12-产品级验收第一性原理复盘.md",
-      "symbol": "honesty-rules"
-     }
-    },
-    {
-     "label": "双点核实：睡前拔电承诺 + 收表时电池状态披露",
-     "target": {
-      "file": "scripts/a1-collect-m1-heartbeat.sh",
-      "symbol": "A1_SCHEDULED"
-     }
-    },
-    {
-     "label": "dumpsys battery unplug 伪造断电（复盘允许但须披露台架手段）",
-     "target": {
-      "file": "docs/2026-11-12-产品级验收第一性原理复盘.md",
-      "symbol": "honesty-rules"
-     }
-    }
-   ],
-   "picked": "双点核实：睡前拔电承诺 + 收表时电池状态披露",
-   "evidence": {
-    "kind": "memory",
-    "ref": "log#17",
-    "asserts": [
-     "双点核实",
-     "睡前拔电熄屏承诺"
-    ]
-   },
-   "target": {
-    "file": "scripts/a1-collect-m1-heartbeat.sh",
-    "symbol": "A1_SCHEDULED"
-   },
-   "cost_if_wrong": "high",
-   "verified": true
-  },
-  {
-   "fork": "发布评估随安卓门禁补齐怎么更新（2026-11-18）",
-   "options": [
-    {
-     "label": "两端都可公开有条件：安卓消掉2缺口、保留3项写进发布说明",
-     "target": {
-      "file": "docs/2026-11-18-公开发布评估.md",
-      "symbol": "结论先行"
-     }
-    },
-    {
-     "label": "维持旧结论不建议公开（门禁已补，不更新不诚实）",
-     "target": {
-      "file": "docs/2026-11-18-公开发布评估.md",
-      "symbol": "旧版见 git 0fc2571"
-     }
-    }
-   ],
-   "picked": "两端都可公开有条件：安卓消掉2缺口、保留3项写进发布说明",
-   "evidence": {
-    "kind": "memory",
-    "ref": "log#31",
-    "asserts": [
-     "结论更新为两端都可公开有条件",
-     "release 签名 APK CN=CNAL 验签通过",
-     "首屏 SupportNotice 异校劝退"
-    ]
-   },
-   "target": {
-    "file": "docs/2026-11-18-公开发布评估.md",
-    "symbol": "结论先行"
-   },
-   "cost_if_wrong": "low",
-   "verified": true
-  },
-  {
-   "fork": "协议层通用化怎么在有限条件下做（2026-11-18 grill-me 五问）",
-   "options": [
-    {
-     "label": "明文 GET/POST+指纹快筛与行为确认+语料回放判据；加密族不支持",
-     "target": {
-      "file": "internal/app/confirm_wiring.go",
-      "symbol": "ConfirmSetupPortal"
-     }
-    },
-    {
-     "label": "做加密插件适配器/内嵌 JS 引擎（超有限条件，否决）",
-     "target": {
-      "file": "internal/protocol/form.go",
-      "symbol": "ParseForm"
-     }
-    }
-   ],
-   "picked": "明文 GET/POST+指纹快筛与行为确认+语料回放判据；加密族不支持",
-   "evidence": {
-    "kind": "memory",
-    "ref": "log#32",
-    "asserts": [
-     "只覆盖明文 GET/POST",
-     "指纹快筛+行为确认双路径",
-     "公开语料回放+模拟门户e2e"
-    ]
-   },
-   "target": {
-    "file": "internal/app/confirm_wiring.go",
-    "symbol": "ConfirmSetupPortal"
-   },
-   "cost_if_wrong": "low",
-   "verified": true
-  }
- ]
+  ]
 }

@@ -18,10 +18,19 @@ func newAPI(cfg *daemonConfig, p *plumbing, d *keeper.Daemon) *api.Server {
 	a := api.New()
 	// 查流量缝：面板/托盘 /flux 端点直通内核同款 flux 查询（同一 portal 客户端、
 	// 同一 parseFluxTable——物理栈纪律与判死探针同源，不造第二份）。
-	a.FetchFlux = func() (map[string]string, error) { return p.fluxQuery(*cfg) }
+	// 实时快照成功后回写守护缓存（2026-11-21 用户报告「流量明细与今日流量
+	// 数值不一致」：明细实时 vs 今日流量缓存，时差制造两个数字——回写收敛）。
+	a.FetchFlux = func() (map[string]string, error) {
+		data, err := p.fluxQuery(*cfg)
+		if err == nil {
+			d.StoreFluxView(data)
+		}
+		return data, err
+	}
 	a.Snapshot = func() api.Snapshot {
 		state, detail, v6State, sessionDead, freeMode := d.View()
 		h := d.Health()
+		lastKind, lastAt := d.LastAction()
 		snap := api.Snapshot{
 			State:   state,
 			Detail:  detail,
@@ -38,18 +47,32 @@ func newAPI(cfg *daemonConfig, p *plumbing, d *keeper.Daemon) *api.Server {
 			Reason:      h.Reason,
 			ReasonLabel: api.ReasonText(h.Reason),
 			Action:      h.Action,
-			// 旁路网卡未认证观察（只展示；解释 Windows 黄叹号误报）。
-			UnauthSources: d.UnauthSiblings(),
+			// 未认证源（只展示；解释 Windows 黄叹号误报）：从通道读数派生——
+			// 2026-11-20 起通道观察是唯一探测路径（旧旁路观察已删，避免同一
+			// 张卡被探两次、两处规矩漂移）。契约字段保留：旧客户端零影响。
+			UnauthSources: unauthChannelIPs(d.ChannelViews()),
+			// 多通道认证态（2026-11-20 双通道 M1）：每张物理卡各自一份
+			// （门户按源 IP 记会话）。label 由内核词表给出。
+			Channels: d.ChannelViews(),
+			// 动作时间线（2026-11-21 决议 C）：最近一次守护动作，面板显示
+			//「N 分钟前·自动登录」——断网排查第一眼可读。
+			LastAction:   lastKind,
+			LastActionAt: lastAt,
 			Extra: map[string]bool{"session_dead": sessionDead, "free_mode": freeMode,
-				"auto_reconnect": d.AutoReconnectOn()},
+				"auto_reconnect": d.AutoReconnectOn(),
+				"multi_channel":  d.MultiChannelOn()},
 		}
 		// 原因覆盖状态名：本地节流不再冒充「登录被拒」，绑定失效不再只说「离线」。
+		// fake_online 的覆盖即「会话在线｜出口被控」主状态词（2026-11-22 修复项 2）。
 		if lbl, ok := api.ReasonLabel(h.Reason); ok {
 			snap.Label = lbl
 		}
 		if c, ok := api.ReasonColor(h.Reason); ok {
 			snap.Color = c
 		}
+		// 菜单行短形态（2026-11-22 修复项 4）：Reason 覆盖后的终值 Label +
+		// 详情第一段；括号补充说明不进菜单行，完整读数留给 tooltip/面板。
+		snap.MenuLine = api.MenuLine(snap.Label, snap.Detail, snap.UserPath)
 		// 低频轮询缓存的流量视图：只在拿到过读数时带上（omitempty，旧客户端
 		// 读到的 JSON 形状不变）。面板刷 /state 顺带取，不再单独打 /flux。
 		if v := d.FluxUsage(); v.HasPercent || v.Used != "" || len(v.Raw) > 0 {
@@ -86,6 +109,9 @@ func newAPI(cfg *daemonConfig, p *plumbing, d *keeper.Daemon) *api.Server {
 		view["server"] = cfg.Server
 		view["free_windows"] = d.FreeWindowsText() // 守护当前值，不是启动时的 cfg
 		view["auto_reconnect"] = strconv.FormatBool(d.AutoReconnectOn())
+		// multi_channel（2026-11-20）：漏了这个键时面板保存成功但回读拿不到，
+		// 勾选被清成未勾选——用户感知「点多通道自愈再保存一直失败」。
+		view["multi_channel"] = strconv.FormatBool(d.MultiChannelOn())
 		view["bind_ip"] = cfg.BindIP
 		return view
 	}
@@ -149,6 +175,11 @@ func newAPI(cfg *daemonConfig, p *plumbing, d *keeper.Daemon) *api.Server {
 		}
 		cfg.Username = user
 		RememberAccount(cfgPathCached, user, cfg.Server) // 历史账号置顶（失败不致命）
+		// 切账号成功：作废流量视图缓存（旧账号读数不得显示在新账号名下；
+		// 下一拍 Tick 立即重查——2026-11-20 用户报告「今日流量与明细不一致」）。
+		d.InvalidateFlux()
+		// 动作时间线（2026-11-21 决议 C）：切账号也是守护动作，面板可追溯。
+		d.RecordAction("切换账号")
 		return msg, nil
 	}
 	// 面板设置校验（api /config POST 在任何写入之前调用）：免认证时段必须
@@ -176,6 +207,9 @@ func newAPI(cfg *daemonConfig, p *plumbing, d *keeper.Daemon) *api.Server {
 		}
 		if v, ok := values["auto_reconnect"]; ok {
 			d.SetAutoReconnect(v == "true" || v == "1" || v == "on")
+		}
+		if v, ok := values["multi_channel"]; ok {
+			d.SetMultiChannel(v == "true" || v == "1" || v == "on")
 		}
 		if v, ok := values["free_windows"]; ok {
 			d.SetFreeWindows(v) // 内存与 ini 同时到位，面板回读也是新值

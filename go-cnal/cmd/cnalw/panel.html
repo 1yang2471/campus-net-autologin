@@ -23,6 +23,7 @@
         <div class="state-label" id="label">正在读取守护状态…</div>
         <div class="state-detail" id="detail"></div>
         <div class="state-detail" id="readings"></div>
+        <div class="state-detail" id="last-action"></div>
       </div>
     </div>
     <div class="meta" id="meta"></div>
@@ -54,7 +55,7 @@
     <dl>
       <div class="kv"><dt>IPv4 源</dt><dd id="v4">—</dd></div>
       <div class="kv"><dt>IPv6 源</dt><dd id="v6">—</dd></div>
-      <div class="kv"><dt>其他网卡</dt><dd id="nics">—</dd></div>
+      <div class="kv"><dt>通道</dt><dd id="channels">—</dd></div>
       <div class="kv"><dt>门户路径</dt><dd id="route">—</dd></div>
       <div class="kv"><dt>会话探针</dt><dd id="sess">—</dd></div>
       <div class="kv"><dt>免会话检测</dt><dd id="free">—</dd></div>
@@ -97,6 +98,7 @@
         <input id="f-bindip" autocomplete="off" spellcheck="false" placeholder="如 172.29.1.5">
       </label>
       <label class="check"><input id="f-auto" type="checkbox"> 掉线自动重连（关=只探测不自动登录）</label>
+      <label class="check"><input id="f-multich" type="checkbox"> 多通道自愈（未认证的其它网卡各自登录；共用账号级登录预算）</label>
       <details id="advanced">
         <summary id="adv-toggle">高级设置（网络参数与异校响应词表）</summary>
         <div class="adv-grid">

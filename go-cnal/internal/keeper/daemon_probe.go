@@ -10,8 +10,11 @@ func (d *Daemon) probeSession() {
 		return
 	}
 	now := d.Now()
-	if now.Before(d.fluxOffUntil) {
-		return // SESSION_FALSE 自停期内：探针闭嘴，不再产生假判死
+	// SESSION_FALSE 熔断只停 flux 回落（假判死的信号源），不得连坐 SessionAlive
+	// （2026-11-21 实测复盘：熔断把 IP 级真值一并停了 1 小时，会话真死无人报，
+	// 假绿窗口从此打开——免认证窗口结束 3.5h 假在线的成因链一环）。
+	if d.SessionAlive == nil && now.Before(d.fluxOffUntil) {
+		return
 	}
 	if !d.sessAt.IsZero() && now.Sub(d.sessAt) < sessionProbeInterval {
 		return // 60s 节流（同 l2At/v6At）：会话真值不是心跳
@@ -72,6 +75,17 @@ func (d *Daemon) probeUserPath() {
 	r := d.UserPath()
 	d.mu.Lock()
 	d.userPath = r
+	// 红 streak 起点记账（mu 护住：跨 goroutine 读者 fakeOnline 也要读它，
+	// 2026-11-22 修复项 2）：2026-11-21 决议 B——用户路径红持续 ≥5 分钟才
+	// 上浮互证附注；转绿或转未知都清零（未知期间的陈账不是「持续异常」的
+	// 证据，红复来重新起算）。
+	if r.Known && !r.OK {
+		if d.userPathSince.IsZero() {
+			d.userPathSince = now
+		}
+	} else {
+		d.userPathSince = time.Time{} // 转绿/转未知即消，且不计时
+	}
 	d.mu.Unlock()
 }
 
@@ -92,9 +106,8 @@ func (d *Daemon) probeSessionOnL1Red(now time.Time) (dead, known bool) {
 	if d.SessionAlive == nil {
 		return false, false
 	}
-	if now.Before(d.fluxOffUntil) {
-		return false, false
-	}
+	// fluxOffUntil 在此只可能连坐 SessionAlive（flux 走不到这条缝）——
+	// IP 级真值不受熔断停用（同 probeSession 的 2026-11-21 修正）。
 	if !d.sessRedAt.IsZero() && now.Sub(d.sessRedAt) < l1RedSessionInterval {
 		return !d.sessRedAlive, d.sessRedKnown
 	}
@@ -111,14 +124,46 @@ func (d *Daemon) invalidateSessionCache() {
 	d.sessRedAt = time.Time{}
 }
 
-// sessionAliveL1RedDetail 认证在线但锚点红时的状态行（双读数的前身：认证
-// 读数正常，用户路径/线路异常）。L2 观察作为附属信息，不抢主句。
+// sessionAliveL1RedDetail 认证在线但锚点红时的状态行：短窗「认证在线（锚点
+// 异常，会话正常）」，组合态（2026-11-22 复盘内因 2：三读数并立≥10 分钟）
+// 升级为「校园出口被控」+ 指引——「在线」打头的误导正是本次事故的痛点根源。
+// L2 观察作为附属信息，不抢主句；组合态下 L2 文案的「勿反复重登」段与组合
+// 指引重复，省略附属。
 func (d *Daemon) sessionAliveL1RedDetail() string {
+	if d.userPathRedLong() {
+		// 主状态词「会话在线｜出口被控」由 fake_online reason 覆盖进 Label；
+		// detail 讲细节与指引，首段不与 Label 重复（MenuLine 只取首段）。
+		return "锚点+用户路径持续红≥10 分钟（会话由 online_check 独立核实）｜重连救不了：等待恢复或换网络，可查梯子残留"
+	}
 	base := "认证在线（锚点异常，会话正常）"
-	if extra := d.onlineDetail(); extra != "" {
+	if extra := d.onlineDetail(false); extra != "" {
 		return base + "｜" + extra
 	}
 	return base
+}
+
+// fakeOnlineThreshold AC 假在线组合判定阈值（2026-11-22 复盘内因 2）：会话绿+
+// 锚点红+用户路径红三读数并立 ≥10 分钟。5min 是 userPath 附注门槛（决议 B），
+// 10min 是「持续较久」语义锚点（l2StreakThreshold 同源）。
+const fakeOnlineThreshold = 10 * time.Minute
+
+// userPathRedLong 用户路径红持续 ≥fakeOnlineThreshold（组合判据的 streak 项）。
+func (d *Daemon) userPathRedLong() bool {
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+	return !d.userPathSince.IsZero() && d.Now().Sub(d.userPathSince) >= fakeOnlineThreshold
+}
+
+// fakeOnline AC 假在线组合判定（唯一真相源）：会话绿+锚点红+用户路径红≥10 分钟。
+// health.go 的 Reason（→ Label「会话在线｜出口被控」）与组合文案都取这里，
+// 不自造第二份组合判定。
+func (d *Daemon) fakeOnline() bool {
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+	if d.State != StateOnline || d.SessionDead || !d.l1RedSessionAlive {
+		return false
+	}
+	return !d.userPathSince.IsZero() && d.Now().Sub(d.userPathSince) >= fakeOnlineThreshold
 }
 
 // sessionMissThreshold 判死需要几拍「不在线」。
@@ -133,52 +178,6 @@ func (d *Daemon) sessionMissThreshold() int {
 		return 1
 	}
 	return 2
-}
-
-// siblingProbeInterval 旁路网卡观察节流：与 L2/v6 同量级（60s）。每拍扫
-// 所有非绑定源会被枚举异常放大成请求风暴，且认证态不是心跳。
-const siblingProbeInterval = 60 * time.Second
-
-// probeSiblings 观察非绑定物理源的认证态（2026-11-19 多网卡实证：只维护一个
-// bind_ip，网线在未认证 VLAN 时不登录、不显示，用户只看到 Windows 黄叹号）。
-//
-// **异步 + 单飞**（2026-11-19 下午回归修复）：探测本身要走 DNS 解析 + HTTP，
-// 未认证 VLAN 上两项都可能吃满超时——每张卡 probe_timeout×2，两张卡就是十几秒。
-// 早先同步跑在 Tick 里，把 3 秒心跳拖成十几秒一拍（实测 7s 停顿反复出现）。
-// 现在：Tick 只做节流判定与起飞，探测在独立 goroutine 里跑；同一时刻最多一个
-// 在飞（siblingBusy），慢探测不会被下一拍叠加成风暴。
-func (d *Daemon) probeSiblings() {
-	if d.ProbeSiblingAuth == nil {
-		return
-	}
-	now := d.Now()
-	if !d.siblingAt.IsZero() && now.Sub(d.siblingAt) < siblingProbeInterval {
-		return
-	}
-	if d.siblingBusy.Swap(true) {
-		return // 上一轮还在飞：不叠加，等它自己落地
-	}
-	d.siblingAt = now
-	go func() {
-		defer d.siblingBusy.Store(false)
-		list := d.ProbeSiblingAuth()
-		d.mu.Lock()
-		d.siblingUnauth = list
-		d.mu.Unlock()
-	}()
-}
-
-// UnauthSiblings 最近一次观察到的「已连接但未认证」源（面板/回路快照用）。
-// 返回副本：调用方在别的 goroutine 读，不得与 Tick 写侧共享底层数组。
-func (d *Daemon) UnauthSiblings() []string {
-	d.mu.RLock()
-	defer d.mu.RUnlock()
-	if len(d.siblingUnauth) == 0 {
-		return nil
-	}
-	out := make([]string, len(d.siblingUnauth))
-	copy(out, d.siblingUnauth)
-	return out
 }
 
 // setSessionDead 会话判死标记（与 View 的加锁读配对）。
@@ -215,11 +214,37 @@ func (d *Daemon) probeL2() {
 	d.l2At = now
 	// 探测（含 TLS 握手，秒级）在锁外；只有赋值进锁——别让壳层的
 	// RLock 读被网络调用卡住几秒（2026-11-08 P0 并发纪律的写侧对称）。
-	restricted := d.ProbeL2() == "restricted"
+	// 结果三态：ok / restricted（真·出口受限）/ dns_broken（校园 DNS 给了
+	// 异常解析结果，网络实际可用——2026-11-22 复盘内因 1，与真拉黑区分）。
+	result := d.ProbeL2()
+	restricted := result == "restricted"
+	dnsBroken := result == "dns_broken"
 	d.mu.Lock()
+	// 受限/解析异常记账都进锁：跨 goroutine 读者是 fakeOnline（读 userPathSince）
+	// 与 DnsBrokenOnUI/L2RestrictedOnUI（壳层 goroutine）；onlineDetail 仅 Tick
+	// goroutine 调（Tick 内裸读记账字段属既有纪律，勿迁出 Tick goroutine）。
+	if restricted {
+		if d.l2Since.IsZero() {
+			d.l2Since = now // 本轮受限起点
+		}
+	} else {
+		d.l2Since = time.Time{}
+	}
 	d.l2Restricted = restricted
 	if restricted {
 		d.l2WindowUntil = now.Add(2 * v6ProbeInterval)
+	}
+	// dns_broken 记账与 l2 族对称（三态互斥，ok 双清）。
+	if dnsBroken {
+		if d.dnsBrokenSince.IsZero() {
+			d.dnsBrokenSince = now
+		}
+	} else {
+		d.dnsBrokenSince = time.Time{}
+	}
+	d.dnsBroken = dnsBroken
+	if dnsBroken {
+		d.dnsBrokenWindow = now.Add(2 * v6ProbeInterval)
 	}
 	d.mu.Unlock()
 }
@@ -234,14 +259,73 @@ func (d *Daemon) L2RestrictedOnUI() bool {
 	return d.l2Restricted || d.Now().Before(d.l2WindowUntil)
 }
 
-// onlineDetail 在线态详情：L2 受限优先（直接影响体验），v6 文案次之。
-// 只观察的两层都在这里上浮——只写日志用户看不见（2026-11-05 实测被误当失职）。
-func (d *Daemon) onlineDetail() string {
+// DnsBrokenOnUI 校园 DNS 解析异常可见缝：异常中或恢复后保留窗口内为真，
+// 与 onlineDetail 的上浮判定同源（对称 L2RestrictedOnUI）。
+func (d *Daemon) DnsBrokenOnUI() bool {
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+	return d.dnsBroken || d.Now().Before(d.dnsBrokenWindow)
+}
+
+// l2StreakThreshold L2 受限持续多久点名「持续」（可见性升级门槛）。
+const l2StreakThreshold = 10 * time.Minute
+
+// userPathStreakThreshold 用户路径异常持续多久才上浮互证附注（决议 B）：
+// 系统栈抖一拍就提示会成为噪音；这是互证信号不是判定，让用户知道
+//「守护说在线但浏览器可能上不了网」该找代理/TUN，而不是以为守护失职。
+const userPathStreakThreshold = 5 * time.Minute
+
+// onlineDetail 在线态详情：L2 受限优先（直接影响体验），校园 DNS 解析异常
+// 次之，用户路径互证附注再次，v6 文案殿后。只观察的两层都在这里上浮——
+// 只写日志用户看不见（2026-11-05 实测被误当失职）。l1Green 为本拍锚点结论：
+// 互证附注只在 L1 绿时说「守护探测走物理栈不受影响」，锚点也红时那句话不成立。
+func (d *Daemon) onlineDetail(l1Green bool) string {
 	now := d.Now()
+	var base string
 	if d.l2Restricted || now.Before(d.l2WindowUntil) {
-		return "出口受限（观察：大众站 TLS 被重置；认证正常；勿反复重登）"
+		// 持续 ≥10min 点名（2026-11-21 实测复盘：出口受限 3.5 小时只显示
+		//「观察中」，用户无从判断该不该动手）。只改可见性不改判定——
+		// 会话真值由 probeSession 独立核实，对抗 DPI 不违规。
+		if !d.l2Since.IsZero() && now.Sub(d.l2Since) >= l2StreakThreshold {
+			base = "出口受限持续较久（大众站 TLS 被重置≥10 分钟；认证正常；会话由 online_check 独立核实，勿反复重登）"
+		} else {
+			base = "出口受限（观察：大众站 TLS 被重置；认证正常；勿反复重登）"
+		}
+	} else if d.DnsBrokenOnUI() {
+		// 校园 DNS 解析异常（2026-11-22 复盘内因 1）：campus_dns 给假 IP →
+		// 钉假 IP TLS 必死，与真·AC 拉黑（双路都死）区分——分叉时同栈对照
+		// 实测可达，真警报不该记在出口头上。
+		if !d.dnsBrokenSince.IsZero() && now.Sub(d.dnsBrokenSince) >= l2StreakThreshold {
+			base = "校园 DNS 解析异常持续较久（校园 DNS 持续给不可用的解析结果；实测网络可达；认证正常；勿反复重登）"
+		} else {
+			base = "校园 DNS 解析异常（解析结果不可用；实测网络可达；认证正常；勿反复重登）"
+		}
+	} else {
+		base = d.v6Detail()
 	}
-	return d.v6Detail()
+	if extra := d.userPathDetail(now, l1Green); extra != "" {
+		if base == "" {
+			return extra
+		}
+		return base + "｜" + extra
+	}
+	return base
+}
+
+// userPathDetail 用户路径互证附注（2026-11-21 产品优化决议 B）：L1 绿
+//（在线态）而系统栈持续 ≥5 分钟不通时上浮。只做展示，绝不参与判定——
+// 转绿/转未知即消；读 userPath 走加锁读（Tick 写、壳层读的同款纪律）。
+func (d *Daemon) userPathDetail(now time.Time, l1Green bool) string {
+	if !l1Green {
+		return "" // 锚点也红：物理栈同样受影响，「不受影响」不成立
+	}
+	d.mu.RLock()
+	known, ok := d.userPath.Known, d.userPath.OK
+	d.mu.RUnlock()
+	if !known || ok || d.userPathSince.IsZero() || now.Sub(d.userPathSince) < userPathStreakThreshold {
+		return ""
+	}
+	return "用户路径异常（代理/TUN 接管？守护探测走物理栈不受影响）"
 }
 
 // probeV6 v6 四态观察，60s 一节流（每拍握手会刷爆日志并高频撞 DPI）。

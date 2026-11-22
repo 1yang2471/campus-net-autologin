@@ -1,0 +1,7 @@
+{
+  "_comment": "提交门禁（ZCode test-gate-hook 项目级覆盖，2026-11-20）。",
+  "_why": "本仓 Python 版已退役（be44d30，收敛为 Go 单一入口），go.mod 在 go-cnal/ 子目录——按根目录标记探测的约定链够不到，配本覆盖把提交门指到真实测试面。与 AGENTS.md「入口与测试」同一条命令，一处真相。",
+  "_scope_note": "覆盖 go-cnal 全部包的提交门禁；docs/ 纯文档提交同样跑此门（文档改动也要能过测试再提交，代价可接受：cached 时秒级）。",
+  "command": "cd go-cnal && go test ./...",
+  "timeoutMs": 300000
+}

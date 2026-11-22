@@ -3,6 +3,7 @@ package app
 import (
 	"errors"
 	"net"
+	"time"
 
 	"cnal/internal/netstack"
 )
@@ -68,6 +69,15 @@ func (p *plumbing) chooseRoute(bound, system *netstack.Client) portalRoute {
 			path: routeBound,
 			why:  "绑源解析失败（" + routeErrText(err) + "），net_mode=bound 拒绝转系统栈",
 		})
+	}
+	// 转系统栈 = 绑源解析失败：可能源失效。触发物理源重发现（2026-11-22 复盘
+	// 内因 3：rd 触发面窄——11-22 事故插线恢复后 10 分钟粘滞，绑源解析恢复
+	// 前门户路径一直赖在系统栈）。rd.tick 自带 interval 节流 + TryLock 非阻塞
+	// + 源变了才换绑，热路径安全；interval 窗口外的首击会在本 goroutine 同步
+	// 跑一次源探测（秒级）——绑源已死时的手动操作多背这一份延迟，属重选的
+	// 本职工作。
+	if p.rd != nil {
+		p.rd.tick(time.Now())
 	}
 	return p.noteRoute(portalRoute{
 		client: system, path: routeSystem,

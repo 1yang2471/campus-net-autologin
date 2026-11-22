@@ -2,6 +2,8 @@ package app
 
 import (
 	"net"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -112,7 +114,38 @@ func TestNewAPIWiresAllSeams(t *testing.T) {
 	}
 }
 
+// 行为（2026-11-21 产品优化决议 C）：守护动作时间线接线——Snapshot 闭包
+// 带上 keeper 的最近动作（kind + 时刻），面板据此渲染「N 分钟前·自动登录」。
+// 漏接的形态与 2026-11-07 漏填 Color 同类：编译过、单测过，只在真机上空白。
+func TestSnapshotCarriesLastAction(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte("<html>登录</html>"))
+	}))
+	t.Cleanup(srv.Close)
+	cfg := defaultAdvancedConfig()
+	cfg.Server = srv.URL
+	pl := &plumbing{
+		pt:        newPortalTarget(func() (net.IP, error) { return net.IPv4(127, 0, 0, 1), nil }, time.Minute),
+		portal:    netstack.New(net.IPv4(127, 0, 0, 1), 2*time.Second),
+		currentV6: func() net.IP { return nil },
+		action:    &keeper.LoginAction{},
+		rl:        keeper.NewRateLimit(8, time.Hour, 15*time.Minute, time.Now),
+	}
+	d := newDaemon(cfg, pl)
+	d.RecordAction("自动登录")
+	a := newAPI(&cfg, pl, d)
+	snap := a.Snapshot()
+	if snap.LastAction != "自动登录" {
+		t.Errorf("Snapshot 应带最近动作 kind，实际 %q", snap.LastAction)
+	}
+	if snap.LastActionAt.IsZero() {
+		t.Error("Snapshot 应带最近动作时刻（面板算「N 分钟前」用）")
+	}
+}
+
 // 面板 GET /config 的键集合：拆文件后 GetConfig 仍须给出全部常用键。
+// multi_channel 2026-11-20 补：漏了这个键，面板保存成功后回读拿不到它，
+// 勾选被清成未勾选——用户感知「点多通道自愈再保存一直失败」。
 func TestNewAPIGetConfigKeys(t *testing.T) {
 	cfg := defaultAdvancedConfig()
 	cfg.Server = "https://portal.example"
@@ -121,13 +154,17 @@ func TestNewAPIGetConfigKeys(t *testing.T) {
 	d := newDaemon(cfg, pl)
 	a := newAPI(&cfg, pl, d)
 	view := a.GetConfig()
-	for _, k := range []string{"username", "server", "free_windows", "auto_reconnect", "bind_ip", "login_form"} {
+	for _, k := range []string{"username", "server", "free_windows", "auto_reconnect", "bind_ip", "login_form",
+		"multi_channel", "interval", "probe_timeout"} {
 		if _, ok := view[k]; !ok {
 			t.Errorf("GetConfig 缺键 %s（面板回填会空白）", k)
 		}
 	}
 	if view["server"] != "https://portal.example" {
 		t.Errorf("server 应回显配置值，实际 %q", view["server"])
+	}
+	if view["multi_channel"] != "false" {
+		t.Errorf("multi_channel 默认应为 false，实际 %q", view["multi_channel"])
 	}
 }
 

@@ -94,6 +94,7 @@ async function loadConfig() {
     renderFreeWindows(c.free_windows || "");
     document.getElementById("f-bindip").value = c.bind_ip || "";
     document.getElementById("f-auto").checked = c.auto_reconnect !== "false";
+    document.getElementById("f-multich").checked = c.multi_channel === "true";
     advancedConfigView(c);
     document.getElementById("free-add").disabled = false;
     configLoaded = true;
@@ -225,6 +226,14 @@ document.getElementById("switch").addEventListener("click", async (ev) => {
         if (body && body.message) text = body.message;
       } catch (e) { /* 非 JSON 就退回默认文案 */ }
       msg.textContent = text;
+      // 切账号后旧账号的流量明细作废：状态卡由内核作废缓存并重查，而
+      // 「流量明细」行是手动查询留下的文本——不一起清，用户会看到两个
+      // 数字属于不同账号（2026-11-20 用户报告）。
+      const fluxEl = document.getElementById("flux");
+      if (fluxEl) {
+        fluxEl.textContent = "未查询（账号已切换，可重新查）";
+        fluxEl.title = "";
+      }
       loadConfig();
     } else {
       msg.textContent = "切换失败：" + (await r.text());
@@ -253,6 +262,7 @@ document.getElementById("save").addEventListener("click", async (ev) => {
       server: document.getElementById("f-server").value.trim(),
       bind_ip: document.getElementById("f-bindip").value.trim(),
       auto_reconnect: document.getElementById("f-auto").checked ? "true" : "false",
+      multi_channel: document.getElementById("f-multich").checked ? "true" : "false",
     };
     if (configLoaded) {
       try {

@@ -11,7 +11,7 @@ fail=0
 while IFS= read -r f; do
     [ -n "$f" ] && [ -f "$f" ] || continue
     case "$f" in
-        *.lock|*lock.json|*.sum|*.mod|*/dist/*|*.exe|*.dll|*.png|*.ico|*.jpg|*.webp|*.zip|*.gz|*.pdf)
+        *.lock|*lock.json|*.sum|*.mod|*/dist/*|*.exe|*.dll|*.aar|*.jar|*.png|*.ico|*.jpg|*.webp|*.zip|*.gz|*.pdf|*/assets/panel.html)
             continue ;;
     esac
     sz=$(wc -c < "$f" 2>/dev/null || echo 0)

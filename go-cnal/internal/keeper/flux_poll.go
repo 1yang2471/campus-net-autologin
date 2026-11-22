@@ -60,6 +60,28 @@ func (d *Daemon) updateFluxView(data map[string]string, now time.Time) {
 	}
 }
 
+// InvalidateFlux 作废流量视图缓存（切账号后调用：旧账号的读数不得显示在
+// 新账号名下——2026-11-20 用户报告「今日流量与流量明细不一致」的根因）。
+// 跨 goroutine 安全：只置原子标志，清空动作在 Tick 的 pollFlux 里做。
+func (d *Daemon) InvalidateFlux() { d.fluxReset.Store(true) }
+
+// StoreFluxView 外部实时读数回写（API /flux 快照查询后同步守护缓存——
+// 2026-11-21 用户报告「流量明细与今日流量数值不一致」：明细是每次点击的
+// 实时快照，「今日流量」是 10 分钟节流缓存，时差天然制造两个数字）。
+//
+// 并发契约（trouble-maker 审查 P0-1 修正）：调用方是 HTTP goroutine
+// （/flux handler），而 fluxAt/fluxQueriedAt/fluxWarner 的单写者契约在
+// daemon.go——跨 goroutine 直接落账是无锁裸写 + fluxWarner 并发 map 写
+// （进程可崩）。与 InvalidateFlux 同一家规：这里只挂原子交接槽，落账由
+// Tick 的 pollFlux 消费。空表不挂（与 updateFluxView 同语义：空表保留
+// 现有读数）。
+func (d *Daemon) StoreFluxView(data map[string]string) {
+	if len(data) == 0 {
+		return
+	}
+	d.fluxPending.Store(&data)
+}
+
 // pollFlux 低频查流量供面板常驻显示。与会话探针共用读数：本轮若已有 flux
 // 数据（probeSession 在 flux 回落路径下刚查过），直接复用，不再触网。
 func (d *Daemon) pollFlux() {
@@ -67,6 +89,23 @@ func (d *Daemon) pollFlux() {
 		return
 	}
 	now := d.Now()
+	// 切账号等外部请求作废缓存：清节流与视图，本拍立即重查新账号读数。
+	// 在途的旧账号快照一并丢弃（P0-1 修正的配套：StoreFluxView 的交接槽
+	// 里可能还压着切账号前的旧读数，不丢会多显一拍）。
+	if d.fluxReset.Swap(false) {
+		d.fluxPending.Store(nil)
+		d.fluxAt = time.Time{}
+		d.fluxQueriedAt = time.Time{}
+		d.mu.Lock()
+		d.fluxView = FluxUsageView{}
+		d.mu.Unlock()
+	}
+	// API goroutine 挂进来的实时快照（StoreFluxView）：在 Tick 单写者侧
+	// 落账——「今日流量」跟上「流量明细」的同一读数，且推进节流不重查。
+	if pending := d.fluxPending.Swap(nil); pending != nil {
+		d.updateFluxView(*pending, now)
+		return
+	}
 	if d.fluxQueriedAt.Equal(now) {
 		return // 本轮已由会话探针查过
 	}

@@ -52,10 +52,11 @@ async function refresh() {
     document.getElementById("label").textContent = label;
     document.getElementById("detail").textContent = s.detail || "";
     renderReadings(s);
+    renderLastAction(s);
     setGlyph(s.color, s.state);
     document.getElementById("v4").textContent = s.v4_src || "未绑定";
     document.getElementById("v6").textContent = s.v6_src || "无 IPv6 源";
-    renderNics(s.unauth_sources);
+    renderChannels(s.channels, s.unauth_sources);
     document.getElementById("route").textContent = s.route || "尚未选路";
     document.getElementById("sess").textContent = s.extra && s.extra.session_dead ? "已判死（重连中）" : "正常";
     document.getElementById("free").textContent = s.extra && s.extra.free_mode ? "已进入（自动检测）" : "未触发";
@@ -72,16 +73,27 @@ async function refresh() {
   }
 }
 
-// 旁路网卡（2026-11-19）：已连接但未认证的其他物理源。Windows 双网卡下
-// 联网指示取最差结果——把事实说清楚，用户才知道黄叹号不等于断网。
-// 字段缺失（旧内核）时显示占位，不编造。
-function renderNics(list) {
-  const el = document.getElementById("nics");
+// 通道（2026-11-20 双通道 M1）：门户按源 IP 记会话，每张物理卡各自一份
+// 认证态。逐条显示「哪张卡 + 什么态」——只列 IP 用户认不出是哪张卡。
+// 旧内核没有 channels 字段时，回落到 unauth_sources 的旧说法，不留空。
+//
+// 「Windows 可能误报无 Internet」那句解释保留在这里（2026-11-19 起的那行
+// 已并入本行——同一事实两处展示是重复）：双网卡下 Windows 联网指示取最差
+// 结果，用户看到黄叹号会以为断网，实际是另一张卡没认证。
+function renderChannels(list, fallback) {
+  const el = document.getElementById("channels");
   if (!el) return;
-  const ips = Array.isArray(list) ? list.filter(x => typeof x === "string" && x) : [];
-  el.textContent = ips.length
-    ? ips.join("、") + "（已连接未认证；Windows 可能误报无 Internet）"
-    : "—";
+  const chans = Array.isArray(list) ? list : [];
+  const note = "（Windows 可能误报无 Internet）";
+  if (chans.length) {
+    const unauth = chans.some(c => c.state === "unauth");
+    el.textContent = chans
+      .map(c => (c.iface || "") + " " + (c.ip || "") + "（" + (c.label || c.state || "未知") + "）")
+      .join("、") + (unauth ? note : "");
+    return;
+  }
+  const ips = Array.isArray(fallback) ? fallback.filter(x => typeof x === "string" && x) : [];
+  el.textContent = ips.length ? ips.join("、") + "（已连接未认证" + note + "）" : "—";
 }
 
 // 双读数（2026-11-18）：认证（物理栈）+ 用户路径（系统栈）+ 原因一句话。
@@ -96,6 +108,19 @@ function renderReadings(s) {
   if (path) parts.push(path);
   if (s.reason_label) parts.push(s.reason_label);
   el.textContent = parts.join("｜");
+}
+
+// 守护动作时间线（2026-11-21 决议 C）：最近一次守护动作「N 分钟前·自动登录」。
+// 断网排查时用户第一眼知道守护动没动过，不用翻日志反推；没有动作过整行留空。
+// N<1 分钟显示「刚刚」；时刻缺失（旧内核）只显示动作名，不编造时间。
+function renderLastAction(s) {
+  const el = document.getElementById("last-action");
+  if (!el) return;
+  if (!s.last_action) { el.textContent = ""; return; }
+  const at = s.last_action_at ? new Date(s.last_action_at) : null;
+  if (!at || isNaN(at)) { el.textContent = s.last_action; return; }
+  const mins = Math.floor((Date.now() - at.getTime()) / 60000);
+  el.textContent = (mins < 1 ? "刚刚" : mins + " 分钟前") + "·" + s.last_action;
 }
 
 // 今日流量：从 /state 的 flux 快照常驻渲染（内核 10 分钟低频轮询，不额外

@@ -1,6 +1,9 @@
 package keeper
 
-import "time"
+import (
+	"errors"
+	"time"
+)
 
 // RateLimit 是自动登录的唯一闸门。三个概念必须分开（v1.0.10 曾把
 // 计数窗口与停时合成一个常量，速率上限被抬到 32 次/小时）：
@@ -50,3 +53,8 @@ func (r *RateLimit) prune(now time.Time) {
 	}
 	r.ok = keep
 }
+
+// ErrRateCapped 速率闸门关闭（app 层哨兵）：Python 对此显示 offline（非 rejected），
+// 内核据此区分「门户回绝」与「本地预算用尽」两种不同语义。2026-11-21 从
+// daemon.go 拆到速率闸门的归属地（守 2 万字节提交闸）。
+var ErrRateCapped = errors.New("速率闸门")
