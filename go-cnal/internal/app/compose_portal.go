@@ -47,6 +47,10 @@ type plumbing struct {
 	action        *keeper.LoginAction
 	rl            *keeper.RateLimit
 	rd            *rediscoverer // bind_ip 手工钉源 / 安卓注入源时为 nil
+	// bindable 绑源自检缝（2026-11-23 过夜缺陷）：DNS 结果在 TTL 缓存里、
+	// 但网卡 IP 被 ROM 摘掉时 dialer 仍会 bind 失败；选路前自检一次，失效
+	// 等同源失效处理（清门户缓存 + 触发 rd + 转系统栈）。nil = 旧语义（不检）。
+	bindable func(net.IP) bool
 	// picker 门户可达性选源器（自动发现路径才有；钉源/注入时为 nil）。
 	picker *netstack.SourcePicker
 }
@@ -200,7 +204,10 @@ func newPlumbing(cfg daemonConfig, user, pass string) (*plumbing, error) {
 		login: loginClient, systemLogin: systemLogin,
 		netMode: cfg.NetMode, logf: printSource,
 		currentV4: currentV4, currentV6: currentV6, handshakeOnce: handshakeOnce,
-		rl: keeper.NewRateLimit(8, time.Hour, 15*time.Minute, time.Now),
+		// 绑源自检：DNS 缓存命中但网卡 IP 被摘掉时（2026-11-23 过夜缺陷），
+		// chooseRoute 据此判绑源是否仍可用，失效则清缓存+转系统栈。
+		bindable: portal.Bindable,
+		rl:       keeper.NewRateLimit(8, time.Hour, 15*time.Minute, time.Now),
 	}
 	p.action = &keeper.LoginAction{
 		User: user, Pass: pass, DualStack: cfg.DualStack,

@@ -58,30 +58,44 @@ func (p *plumbing) chooseRoute(bound, system *netstack.Client) portalRoute {
 	}
 	ip, err := p.pt.lookup()
 	if ip != nil {
-		pin := net.JoinHostPort(ip.String(), p.portalPort)
-		return p.noteRoute(portalRoute{
-			client: bound, pin: pin, path: routeBound,
-			why: "绑源解析成功（钉 " + pin + "）",
-		})
+		// 2026-11-23 过夜缺陷：DNS 结果在 TTL 缓存里命中，但 wlan0 的 IP 已被
+		// Doze 从内核网卡摘掉——dialer 的 LocalAddr 绑不上，5 小时 13 拍全卡在
+		// 「正在重选」。解析成功不等于绑源可用：自检一次源是否仍可绑定。
+		if p.bindable == nil || p.bindable(bound.Source()) {
+			pin := net.JoinHostPort(ip.String(), p.portalPort)
+			return p.noteRoute(portalRoute{
+				client: bound, pin: pin, path: routeBound,
+				why: "绑源解析成功（钉 " + pin + "）",
+			})
+		}
+		// 源不可绑定：等同源失效——清门户 IP TTL 缓存，让下次 lookup 重新
+		// 解析（否则旧 DNS 结果继续粘住）；下面走与解析失败相同的 fallback。
+		p.pt.invalidate()
+		err = errSourceUnbindable
+	}
+	// 解析失败 / 源失效分开报：排障方向不同（查 DNS vs 查网卡）。
+	failKind := "绑源解析失败"
+	if err == errSourceUnbindable {
+		failKind = "绑源不可用"
 	}
 	if mode == NetModeBound {
 		return p.noteRoute(portalRoute{
 			path: routeBound,
-			why:  "绑源解析失败（" + routeErrText(err) + "），net_mode=bound 拒绝转系统栈",
+			why:  failKind + "（" + routeErrText(err) + "），net_mode=bound 拒绝转系统栈",
 		})
 	}
-	// 转系统栈 = 绑源解析失败：可能源失效。触发物理源重发现（2026-11-22 复盘
-	// 内因 3：rd 触发面窄——11-22 事故插线恢复后 10 分钟粘滞，绑源解析恢复
+	// 转系统栈 = 绑源不可用（解析失败或源失效）。触发物理源重发现（2026-11-22
+	// 复盘内因 3：rd 触发面窄——11-22 事故插线恢复后 10 分钟粘滞，绑源解析恢复
 	// 前门户路径一直赖在系统栈）。rd.tick 自带 interval 节流 + TryLock 非阻塞
 	// + 源变了才换绑，热路径安全；interval 窗口外的首击会在本 goroutine 同步
 	// 跑一次源探测（秒级）——绑源已死时的手动操作多背这一份延迟，属重选的
-	// 本职工作。
+	// 本职工作。注入模式 rd 未装配（安卓由 Kotlin 选源），此处不触发。
 	if p.rd != nil {
 		p.rd.tick(time.Now())
 	}
 	return p.noteRoute(portalRoute{
 		client: system, path: routeSystem,
-		why: "绑源解析失败（" + routeErrText(err) + "），转系统栈",
+		why: failKind + "（" + routeErrText(err) + "），转系统栈",
 	})
 }
 
@@ -126,3 +140,7 @@ func routeErrText(err error) string {
 
 // errNoRoute 选路 fail-closed 时的统一错误（调用方按用途再加前缀）。
 var errNoRoute = errors.New("门户解析失败（疑似不在校园网）——不把凭据发往猜测地址")
+
+// errSourceUnbindable 源 IP 从网卡摘掉（DNS 结果还在但 LocalAddr 绑不上）。
+// 与「解析失败」分开报——排障方向完全不同（查网卡 vs 查 DNS）。
+var errSourceUnbindable = errors.New("绑源不可用（网卡 IP 已失效）")

@@ -59,6 +59,36 @@ func (c *Client) source() net.IP {
 // 「从哪张网卡出去」是用户最该看到的事实；重发现改绑后读数同步变）。
 func (c *Client) Source() net.IP { return c.source() }
 
+// Bindable 自检指定源 IP（src 为 nil 时用 client 当前源）是否仍可绑定
+// （2026-11-23 过夜缺陷：MIUI Doze 把 wlan0 的 IP 从内核网卡摘掉，DNS 结果
+// 还在但 dialer 的 LocalAddr 绑不上，chooseRoute 误判「绑源可用」卡死 5 小时）。
+// UDP listen 绑一次即知——不发包、无网络 IO（本地 syscall），可每拍调用；
+// 系统栈无源直接 true（由系统路由决定）。
+//
+// 场景边界：仅用于校园 GUA/v4 源；link-local v6（fe80::%zone）需调用方传
+// zone（当前注入源都是全局地址，暂不涉及）。
+func (c *Client) Bindable(src net.IP) bool {
+	if c.system {
+		return true
+	}
+	if src == nil {
+		src = c.source()
+	}
+	if src == nil {
+		return false // 物理栈未绑源：dialer 本就 fail-closed
+	}
+	network := "udp4"
+	if src.To4() == nil {
+		network = "udp6"
+	}
+	l, err := net.ListenUDP(network, &net.UDPAddr{IP: src})
+	if err != nil {
+		return false
+	}
+	_ = l.Close()
+	return true
+}
+
 // InsecureTLS 显式跳过证书校验，仅用于用户配置 ssl_verify=false 的自签门户
 // （校事实）；默认必须校验——安全默认由 TestTLSVerifyDefaultSecureOptOutExplicit 守着。
 // 注意：跳过的是 **CA 链**，门户主机名仍然强制校验（见 tlsConfig）。
