@@ -1,272 +1,310 @@
 {
-  "schema": 1,
-  "task_class": "docs-new",
-  "forks": [
+ "schema": 1,
+ "task_class": "docs-new",
+ "forks": [
+  {
+   "fork": "M0 测量锚点 connect.rom.miui.com 的白名单效度面：照 Windows 刀 1 变体序改造还是文档化边界（2026-11-21 移植复盘）",
+   "options": [
     {
-      "fork": "M0 测量锚点 connect.rom.miui.com 的白名单效度面：照 Windows 刀 1 变体序改造还是文档化边界（2026-11-21 移植复盘）",
-      "options": [
-        {
-          "label": "改造 M0 探针：裸 IP 对照变体 + 判定口径重定义",
-          "target": {
-            "file": "go-cnal-android/app/src/main/java/dev/cnal/m0/ProbeRunner.kt"
-          }
-        },
-        {
-          "label": "文档化边界：404→OFFLINE 保守判定在参考校 404 形态下读对，A1-A5 判据口径不动",
-          "target": {
-            "file": "go-cnal-android/docs/2026-11-21-windows-fixes-android-port.md"
-          }
-        }
-      ],
-      "picked": "文档化边界：404→OFFLINE 保守判定在参考校 404 形态下读对，A1-A5 判据口径不动",
-      "evidence": {
-        "kind": "repo",
-        "ref": "go-cnal-android/app/src/main/java/dev/cnal/m0/ProbeLogic.kt:25",
-        "asserts": [
-          "else -> ProbeVerdict.OFFLINE"
-        ]
-      },
-      "target": {
-        "file": "go-cnal-android/docs/2026-11-21-windows-fixes-android-port.md",
-        "symbol": "M0 锚点白名单边界"
-      },
-      "cost_if_wrong": "high",
-      "verified": true
+     "label": "改造 M0 探针：裸 IP 对照变体 + 判定口径重定义",
+     "target": {
+      "file": "go-cnal-android/app/src/main/java/dev/cnal/m0/ProbeRunner.kt"
+     }
     },
     {
-      "fork": "运行态快照被 git 跟踪，Stop 钩子自写快照即改 treeHash，stale 永久自指误拦（.gitignore 明写只留本机）",
-      "options": [
-        {
-          "label": "保持跟踪：每轮 hook 自写快照后都要重改台账消 stale",
-          "target": {
-            "file": ".claimrail/last-delivery.json"
-          }
-        },
-        {
-          "label": "按 .gitignore 约定退出跟踪（git rm --cached），快照与记忆 log 只留本机",
-          "target": {
-            "file": ".gitignore"
-          }
-        }
-      ],
-      "picked": "按 .gitignore 约定退出跟踪（git rm --cached），快照与记忆 log 只留本机",
-      "evidence": {
-        "kind": "repo",
-        "ref": "go-cnal/.gitignore:14",
-        "asserts": [
-          "只在本机，不进 git"
-        ]
-      },
-      "target": {
-        "file": ".gitignore",
-        "symbol": "claimrail 本机状态约定"
-      },
-      "cost_if_wrong": "low",
-      "verified": true
-    },
-    {
-      "fork": "免认证窗口边沿后通道重探落在哪一拍（2026-11-21 决议 D）",
-      "options": [
-        {
-          "label": "边沿同拍重探：recheckOnFreeWindowEnd 提到 Channels.tick 之前，边沿那一拍作废节流并立即重探",
-          "target": {
-            "file": "internal/keeper/daemon.go",
-            "symbol": "Tick"
-          }
-        },
-        {
-          "label": "边沿下一拍才重探：保持 Channels.tick 在前，ForceProbe 只让后续拍生效（陈旧读数多活一拍）",
-          "target": {
-            "file": "internal/keeper/channel.go",
-            "symbol": "ForceProbe"
-          }
-        }
-      ],
-      "picked": "边沿同拍重探：recheckOnFreeWindowEnd 提到 Channels.tick 之前，边沿那一拍作废节流并立即重探",
-      "evidence": {
-        "kind": "repo",
-        "ref": "go-cnal/internal/keeper/freewindow.go:114",
-        "asserts": [
-          "立即核实会话",
-          "同拍登录"
-        ]
-      },
-      "target": {
-        "file": "internal/keeper/daemon.go",
-        "symbol": "Tick"
-      },
-      "cost_if_wrong": "low",
-      "verified": true
-    },
-    {
-      "fork": "守护动作时刻怎么暴露给快照装配（2026-11-21 决议 C）",
-      "options": [
-        {
-          "label": "新公开只读方法 LastAction()：View 签名不动，快照闭包单独取读数",
-          "target": {
-            "file": "internal/keeper/daemon_action.go",
-            "symbol": "LastAction"
-          }
-        },
-        {
-          "label": "扩展 View() 返回值：动作字段并进既有快照读数（牵连全部调用方含 mobile）",
-          "target": {
-            "file": "internal/keeper/daemon.go",
-            "symbol": "View"
-          }
-        }
-      ],
-      "picked": "新公开只读方法 LastAction()：View 签名不动，快照闭包单独取读数",
-      "evidence": {
-        "kind": "repo",
-        "ref": "go-cnal/internal/keeper/daemon_probe.go:200-204",
-        "asserts": [
-          "可见缝",
-          "加锁读"
-        ]
-      },
-      "target": {
-        "file": "internal/keeper/daemon_action.go",
-        "symbol": "LastAction"
-      },
-      "cost_if_wrong": "low",
-      "verified": true
-    },
-    {
-      "fork": "免认证窗口内的门户不可达是否累计休眠计时（2026-11-21 决议 A）",
-      "options": [
-        {
-          "label": "不累计：窗口内分支先于记拍返回（预期形态不算「持续不可达」证据）",
-          "target": {
-            "file": "internal/keeper/daemon_dormant.go",
-            "symbol": "portalDownTick"
-          }
-        },
-        {
-          "label": "累计：窗口内也记拍，出窗首拍可能立即休眠（窗口外的连续性按墙钟算）",
-          "target": {
-            "file": "internal/keeper/daemon_dormant.go",
-            "symbol": "portalDownDormantAfter"
-          }
-        }
-      ],
-      "picked": "不累计：窗口内分支先于记拍返回（预期形态不算「持续不可达」证据）",
-      "evidence": {
-        "kind": "repo",
-        "ref": "go-cnal/internal/keeper/daemon_rediscover_test.go:25",
-        "asserts": [
-          "免认证窗口内门户不可达是常态",
-          "不得报告重发现"
-        ]
-      },
-      "target": {
-        "file": "internal/keeper/daemon_dormant.go",
-        "symbol": "portalDownTick"
-      },
-      "cost_if_wrong": "low",
-      "verified": true
-    },
-    {
-      "fork": "last_action_at 的契约形态（2026-11-21 决议 C，api.Snapshot）",
-      "options": [
-        {
-          "label": "time.Time 值字段 + omitempty：零时刻仍会序列化，面板以 last_action 空为准（任务规格字面形态）",
-          "target": {
-            "file": "internal/api/api.go",
-            "symbol": "Snapshot"
-          }
-        },
-        {
-          "label": "*time.Time 指针 + omitempty：无动作时真省略（Flux 字段同款，但装配侧多一层取址）",
-          "target": {
-            "file": "internal/api/api.go",
-            "symbol": "Snapshot"
-          }
-        }
-      ],
-      "picked": "time.Time 值字段 + omitempty：零时刻仍会序列化，面板以 last_action 空为准（任务规格字面形态）",
-      "evidence": {
-        "kind": "repo",
-        "ref": "go-cnal/internal/api/api.go:134",
-        "asserts": [
-          "Flux",
-          "omitempty"
-        ]
-      },
-      "target": {
-        "file": "internal/api/api.go",
-        "symbol": "Snapshot"
-      },
-      "cost_if_wrong": "low",
-      "verified": true
-    },
-    {
-      "fork": "daemon.go 守 2 万字节提交闸拆什么（2026-11-21，B/C/A 三项都要动 Daemon 结构体）",
-      "options": [
-        {
-          "label": "对外交接面拆 daemon_view.go + 启动前 setter 归语义文件（marks/ratelimit/daemon_login）",
-          "target": {
-            "file": "internal/keeper/daemon_view.go",
-            "symbol": "View"
-          }
-        },
-        {
-          "label": "Tick 门户段整体挪 daemon_dormant.go（更大重构，状态机骨架被切开两处）",
-          "target": {
-            "file": "internal/keeper/daemon.go",
-            "symbol": "Tick"
-          }
-        }
-      ],
-      "picked": "对外交接面拆 daemon_view.go + 启动前 setter 归语义文件（marks/ratelimit/daemon_login）",
-      "evidence": {
-        "kind": "repo",
-        "ref": "go-cnal/internal/keeper/daemon_probe.go:5-6",
-        "asserts": [
-          "从 daemon.go 拆出",
-          "提交闸"
-        ]
-      },
-      "target": {
-        "file": "internal/keeper/daemon_view.go",
-        "symbol": "View"
-      },
-      "cost_if_wrong": "low",
-      "verified": true
-    },
-    {
-      "fork": "弹窗治理章节放仓库根 README 哪个位置（2026-11-21 决议 E，docs-new）",
-      "options": [
-        {
-          "label": "「代理与加速器共存」与「常见问题」之间：网络环境类章节尾部，排查语境先读",
-          "target": {
-            "file": "README.md",
-            "symbol": "常见问题"
-          }
-        },
-        {
-          "label": "功能介绍后（「为什么需要它」附近）：与能力清单同区，但治理三层更偏故障排查语境",
-          "target": {
-            "file": "README.md",
-            "symbol": "为什么需要它"
-          }
-        }
-      ],
-      "picked": "「代理与加速器共存」与「常见问题」之间：网络环境类章节尾部，排查语境先读",
-      "evidence": {
-        "kind": "repo",
-        "ref": "README.md:236-247",
-        "asserts": [
-          "代理与加速器共存",
-          "Clash API 联动"
-        ]
-      },
-      "target": {
-        "file": "README.md",
-        "symbol": "常见问题"
-      },
-      "cost_if_wrong": "low",
-      "verified": true
+     "label": "文档化边界：404→OFFLINE 保守判定在参考校 404 形态下读对，A1-A5 判据口径不动",
+     "target": {
+      "file": "go-cnal-android/docs/2026-11-21-windows-fixes-android-port.md"
+     }
     }
-  ]
+   ],
+   "picked": "文档化边界：404→OFFLINE 保守判定在参考校 404 形态下读对，A1-A5 判据口径不动",
+   "evidence": {
+    "kind": "repo",
+    "ref": "go-cnal-android/app/src/main/java/dev/cnal/m0/ProbeLogic.kt:25",
+    "asserts": [
+     "else -> ProbeVerdict.OFFLINE"
+    ]
+   },
+   "target": {
+    "file": "go-cnal-android/docs/2026-11-21-windows-fixes-android-port.md",
+    "symbol": "M0 锚点白名单边界"
+   },
+   "cost_if_wrong": "high",
+   "verified": true
+  },
+  {
+   "fork": "运行态快照被 git 跟踪，Stop 钩子自写快照即改 treeHash，stale 永久自指误拦（.gitignore 明写只留本机）",
+   "options": [
+    {
+     "label": "保持跟踪：每轮 hook 自写快照后都要重改台账消 stale",
+     "target": {
+      "file": ".claimrail/last-delivery.json"
+     }
+    },
+    {
+     "label": "按 .gitignore 约定退出跟踪（git rm --cached），快照与记忆 log 只留本机",
+     "target": {
+      "file": ".gitignore"
+     }
+    }
+   ],
+   "picked": "按 .gitignore 约定退出跟踪（git rm --cached），快照与记忆 log 只留本机",
+   "evidence": {
+    "kind": "repo",
+    "ref": "go-cnal/.gitignore:14",
+    "asserts": [
+     "只在本机，不进 git"
+    ]
+   },
+   "target": {
+    "file": ".gitignore",
+    "symbol": "claimrail 本机状态约定"
+   },
+   "cost_if_wrong": "low",
+   "verified": true
+  },
+  {
+   "fork": "免认证窗口边沿后通道重探落在哪一拍（2026-11-21 决议 D）",
+   "options": [
+    {
+     "label": "边沿同拍重探：recheckOnFreeWindowEnd 提到 Channels.tick 之前，边沿那一拍作废节流并立即重探",
+     "target": {
+      "file": "internal/keeper/daemon.go",
+      "symbol": "Tick"
+     }
+    },
+    {
+     "label": "边沿下一拍才重探：保持 Channels.tick 在前，ForceProbe 只让后续拍生效（陈旧读数多活一拍）",
+     "target": {
+      "file": "internal/keeper/channel.go",
+      "symbol": "ForceProbe"
+     }
+    }
+   ],
+   "picked": "边沿同拍重探：recheckOnFreeWindowEnd 提到 Channels.tick 之前，边沿那一拍作废节流并立即重探",
+   "evidence": {
+    "kind": "repo",
+    "ref": "go-cnal/internal/keeper/freewindow.go:114",
+    "asserts": [
+     "立即核实会话",
+     "同拍登录"
+    ]
+   },
+   "target": {
+    "file": "internal/keeper/daemon.go",
+    "symbol": "Tick"
+   },
+   "cost_if_wrong": "low",
+   "verified": true
+  },
+  {
+   "fork": "守护动作时刻怎么暴露给快照装配（2026-11-21 决议 C）",
+   "options": [
+    {
+     "label": "新公开只读方法 LastAction()：View 签名不动，快照闭包单独取读数",
+     "target": {
+      "file": "internal/keeper/daemon_action.go",
+      "symbol": "LastAction"
+     }
+    },
+    {
+     "label": "扩展 View() 返回值：动作字段并进既有快照读数（牵连全部调用方含 mobile）",
+     "target": {
+      "file": "internal/keeper/daemon.go",
+      "symbol": "View"
+     }
+    }
+   ],
+   "picked": "新公开只读方法 LastAction()：View 签名不动，快照闭包单独取读数",
+   "evidence": {
+    "kind": "repo",
+    "ref": "go-cnal/internal/keeper/daemon_probe.go:200-204",
+    "asserts": [
+     "可见缝",
+     "加锁读"
+    ]
+   },
+   "target": {
+    "file": "internal/keeper/daemon_action.go",
+    "symbol": "LastAction"
+   },
+   "cost_if_wrong": "low",
+   "verified": true
+  },
+  {
+   "fork": "免认证窗口内的门户不可达是否累计休眠计时（2026-11-21 决议 A）",
+   "options": [
+    {
+     "label": "不累计：窗口内分支先于记拍返回（预期形态不算「持续不可达」证据）",
+     "target": {
+      "file": "internal/keeper/daemon_dormant.go",
+      "symbol": "portalDownTick"
+     }
+    },
+    {
+     "label": "累计：窗口内也记拍，出窗首拍可能立即休眠（窗口外的连续性按墙钟算）",
+     "target": {
+      "file": "internal/keeper/daemon_dormant.go",
+      "symbol": "portalDownDormantAfter"
+     }
+    }
+   ],
+   "picked": "不累计：窗口内分支先于记拍返回（预期形态不算「持续不可达」证据）",
+   "evidence": {
+    "kind": "repo",
+    "ref": "go-cnal/internal/keeper/daemon_rediscover_test.go:25",
+    "asserts": [
+     "免认证窗口内门户不可达是常态",
+     "不得报告重发现"
+    ]
+   },
+   "target": {
+    "file": "internal/keeper/daemon_dormant.go",
+    "symbol": "portalDownTick"
+   },
+   "cost_if_wrong": "low",
+   "verified": true
+  },
+  {
+   "fork": "last_action_at 的契约形态（2026-11-21 决议 C，api.Snapshot）",
+   "options": [
+    {
+     "label": "time.Time 值字段 + omitempty：零时刻仍会序列化，面板以 last_action 空为准（任务规格字面形态）",
+     "target": {
+      "file": "internal/api/api.go",
+      "symbol": "Snapshot"
+     }
+    },
+    {
+     "label": "*time.Time 指针 + omitempty：无动作时真省略（Flux 字段同款，但装配侧多一层取址）",
+     "target": {
+      "file": "internal/api/api.go",
+      "symbol": "Snapshot"
+     }
+    }
+   ],
+   "picked": "time.Time 值字段 + omitempty：零时刻仍会序列化，面板以 last_action 空为准（任务规格字面形态）",
+   "evidence": {
+    "kind": "repo",
+    "ref": "go-cnal/internal/api/api.go:134",
+    "asserts": [
+     "Flux",
+     "omitempty"
+    ]
+   },
+   "target": {
+    "file": "internal/api/api.go",
+    "symbol": "Snapshot"
+   },
+   "cost_if_wrong": "low",
+   "verified": true
+  },
+  {
+   "fork": "daemon.go 守 2 万字节提交闸拆什么（2026-11-21，B/C/A 三项都要动 Daemon 结构体）",
+   "options": [
+    {
+     "label": "对外交接面拆 daemon_view.go + 启动前 setter 归语义文件（marks/ratelimit/daemon_login）",
+     "target": {
+      "file": "internal/keeper/daemon_view.go",
+      "symbol": "View"
+     }
+    },
+    {
+     "label": "Tick 门户段整体挪 daemon_dormant.go（更大重构，状态机骨架被切开两处）",
+     "target": {
+      "file": "internal/keeper/daemon.go",
+      "symbol": "Tick"
+     }
+    }
+   ],
+   "picked": "对外交接面拆 daemon_view.go + 启动前 setter 归语义文件（marks/ratelimit/daemon_login）",
+   "evidence": {
+    "kind": "repo",
+    "ref": "go-cnal/internal/keeper/daemon_probe.go:5-6",
+    "asserts": [
+     "从 daemon.go 拆出",
+     "提交闸"
+    ]
+   },
+   "target": {
+    "file": "internal/keeper/daemon_view.go",
+    "symbol": "View"
+   },
+   "cost_if_wrong": "low",
+   "verified": true
+  },
+  {
+   "fork": "弹窗治理章节放仓库根 README 哪个位置（2026-11-21 决议 E，docs-new）",
+   "options": [
+    {
+     "label": "「代理与加速器共存」与「常见问题」之间：网络环境类章节尾部，排查语境先读",
+     "target": {
+      "file": "README.md",
+      "symbol": "常见问题"
+     }
+    },
+    {
+     "label": "功能介绍后（「为什么需要它」附近）：与能力清单同区，但治理三层更偏故障排查语境",
+     "target": {
+      "file": "README.md",
+      "symbol": "为什么需要它"
+     }
+    }
+   ],
+   "picked": "「代理与加速器共存」与「常见问题」之间：网络环境类章节尾部，排查语境先读",
+   "evidence": {
+    "kind": "repo",
+    "ref": "README.md:236-247",
+    "asserts": [
+     "代理与加速器共存",
+     "Clash API 联动"
+    ]
+   },
+   "target": {
+    "file": "README.md",
+    "symbol": "常见问题"
+   },
+   "cost_if_wrong": "low",
+   "verified": true
+  },
+  {
+   "fork": "v2.4.0-go 发布评估里 A2 过夜口径怎么写（过夜实测推翻旧 0.65%/h 结论，且用户 11-12 已拍板仅 MIUI 降级）",
+   "options": [
+    {
+     "label": "保留旧 A2 有条件过/0.65% 口径，另起一段说过夜新数据",
+     "target": {
+      "file": "docs/2026-11-18-公开发布评估.md",
+      "symbol": "A2"
+     }
+    },
+    {
+     "label": "用 11-23 过夜实测改写 A2：进程活过、Doze WiFi 断窗 5h 未过、仅 MIUI 已验",
+     "target": {
+      "file": "docs/2026-11-18-公开发布评估.md",
+      "symbol": "A2"
+     }
+    },
+    {
+     "label": "删掉 A2 结论只留数据，让读者自己判断",
+     "target": {
+      "file": "docs/2026-11-18-公开发布评估.md",
+      "symbol": "A2"
+     }
+    }
+   ],
+   "picked": "用 11-23 过夜实测改写 A2：进程活过、Doze WiFi 断窗 5h 未过、仅 MIUI 已验",
+   "evidence": {
+    "kind": "memory",
+    "ref": "log#25",
+    "asserts": [
+     "仅 MIUI 单机单夜",
+     "进程存活与网络会话保持分开判定",
+     "不得写全过"
+    ]
+   },
+   "cost_if_wrong": "high",
+   "verified": true
+  }
+ ]
 }
