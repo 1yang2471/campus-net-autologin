@@ -5,6 +5,7 @@
 # 前置：先跑 scripts\build.ps1 生成 dist zip，或已装到 %LOCALAPPDATA%\Programs\cnal
 import os
 import re
+import configparser
 import subprocess
 import sys
 import time
@@ -94,9 +95,19 @@ def main():
                 pg.click("#adv-toggle")
                 pg.wait_for_timeout(300)
                 check("高级设置回填探测间隔", bool(pg.locator("#f-interval").input_value()))
-                check("高级设置回填响应词表",
-                      bool(pg.locator("#f-success-marks").input_value())
-                      and bool(pg.locator("#f-freeze-marks").input_value()))
+                # 词表空 = 合法配置（用户显式配空）：按「面板回填与 ini 一致」
+                # 判，不按非空判——非空断言在词表显式配空的机器上必假红
+                # （2026-11-22 装机 30/31 唯一 FAIL 的根因）。
+                cp = configparser.RawConfigParser()
+                cp.read(CFG, encoding="utf-8")
+                norm = lambda s: [x.strip() for x in s.split(",") if x.strip()]
+                exp_s = norm(cp.get("response", "success_marks", fallback=""))
+                exp_f = norm(cp.get("response", "freeze_marks", fallback=""))
+                got_s = norm(pg.locator("#f-success-marks").input_value())
+                got_f = norm(pg.locator("#f-freeze-marks").input_value())
+                check("高级设置回填响应词表（与 ini 一致，空=合法）",
+                      got_s == exp_s and got_f == exp_f,
+                      f"success ini={exp_s} ui={got_s}; freeze ini={exp_f} ui={got_f}")
                 pg.click("#login-form-adv summary")
                 pg.wait_for_timeout(200)
                 check("高级设置回填登录表单模板", bool(pg.locator("#f-login-form").input_value()))

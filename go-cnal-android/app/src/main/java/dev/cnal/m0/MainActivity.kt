@@ -186,11 +186,26 @@ class MainActivity : Activity() {
         // Android 15 edge-to-edge（targetSdk 35）：内容从屏幕顶画起，主题自带的
         // 窗口标题条会整段压住首屏文字（真机取证 2026-11-19：标题/副标题被盖、
         // 说明首行削半截）。NoActionBar + 根视图补系统栏内边距（同 PanelActivity）。
+        // D1 键盘遮挡（验收 2026-11-22）：edge-to-edge 下 adjustResize 属性无效
+        // （targetSdk 35 强制 edge-to-edge）——等效机制是 ime() 内边距 + 显式
+        // 焦点滚动：键盘可见时把内容区压到键盘上方，再把焦点字段滚到可视区
+        // （内置 requestChildFocus 滚动在 padding 变化后不精确，真机取证：
+        // 密码框仍被挡半截）。
         return ScrollView(this).apply {
             addView(root)
             ViewCompat.setOnApplyWindowInsetsListener(this) { v, insets ->
                 val bars = insets.getInsets(WindowInsetsCompat.Type.systemBars())
-                v.setPadding(bars.left, bars.top, bars.right, bars.bottom)
+                val ime = insets.getInsets(WindowInsetsCompat.Type.ime())
+                v.setPadding(bars.left, bars.top, bars.right, maxOf(bars.bottom, ime.bottom))
+                if (ime.bottom > 0) v.post {
+                    val f = v.findFocus() ?: return@post
+                    // 焦点字段的内容坐标 = paddingTop + f.bottom（root 顶对齐
+                    // padding；f.bottom 相对 root，真机取证：漏掉 paddingTop 时
+                    // 密码框 bottom 仍差约一截在键盘下）。
+                    val contentBottom = v.paddingTop + f.bottom
+                    val visible = v.height - v.paddingBottom
+                    smoothScrollTo(0, maxOf(0, contentBottom - visible + dp(8)))
+                }
                 insets
             }
         }
@@ -224,10 +239,36 @@ class MainActivity : Activity() {
                         Toast.makeText(this, msg, Toast.LENGTH_LONG).show()
                     }
                     .onFailure { e ->
-                        Toast.makeText(this, "探测失败：${e.message}", Toast.LENGTH_LONG).show()
+                        // 不加「探测失败：」前缀：已认证场景不是失败（DetectHint
+                        // 的每条文案都自足），未知诊断透传时原始 message 也自足。
+                        Toast.makeText(this, DetectHint.hint(e.message ?: ""),
+                            Toast.LENGTH_LONG).show()
                     }
             }
         }, "detect-portal").start()
+    }
+
+    /**
+     * D2 状态行自动刷新（验收记录 2026-11-22）：onResume 立即一拍 + 每 5s
+     * 自循环，onPause 停。内核未起时 state() 返回「启动中｜守护未启动」，
+     * 起来后自动翻成真状态——不再要手点「刷新状态」。
+     */
+    private val pollTask = object : Runnable {
+        override fun run() {
+            if (!::status.isInitialized) return // PANEL 直跳分支没有 status
+            refreshStatus()
+            ui.postDelayed(this, 5000)
+        }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        ui.post(pollTask) // 立即一拍，之后每 5s
+    }
+
+    override fun onPause() {
+        super.onPause()
+        ui.removeCallbacks(pollTask)
     }
 
     private fun refreshStatus() {
