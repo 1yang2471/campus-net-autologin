@@ -49,7 +49,7 @@ func newDaemon(cfg daemonConfig, p *plumbing) *keeper.Daemon {
 	// 出口健康门槛（2026-11-18 三连登录实证）：本地绑定失效/绑源到不了
 	// 门户时，内核不发凭据，先报状态让组合根重选。
 	d.EgressHealth = p.egressHealth
-	// 物理源重发现只在 bind_ip 未钉源时装配（rd 为 nil 即手工钉源）。
+	// 物理源重发现只在 bind_ip 未钉源时装配（rd 为 nil 即手工钉源/安卓注入）。
 	if p.rd != nil {
 		d.OnPortalDown = func() { p.rd.tick(time.Now()) }
 		// 绑定失效：先把当前源标降级（避免下一轮又选回刚死的候选），再立即
@@ -62,6 +62,15 @@ func newDaemon(cfg daemonConfig, p *plumbing) *keeper.Daemon {
 			}
 			p.rd.force(now)
 		}
+	} else if _, _, injected := physicalSources(); injected {
+		// 安卓注入模式无 rd：两个出口失效信号都不能丢——通知 SourceStale
+		// 让 Kotlin 重新注入物理源（2026-11-24 源失效自愈，D-09）。
+		//   - OnEgressInvalid：网卡 IP 被摘、绑不上；
+		//   - OnPortalDown：绑源有效却到不了门户（连到无校园路由的 Wi-Fi）。
+		// 两者汇到同一个带防抖的入口，一次失效只重注入一次。
+		// 钉源模式（用户显式意图）不接——保持「不抢方向盘」语义。
+		d.OnEgressInvalid = func() { p.notifySourceStale() }
+		d.OnPortalDown = func() { p.notifySourceStale() }
 	}
 	// v6 四态观察（规格 §5.1）：S0 本机无 v6 / S1 不可观测（无入口或握手无响应）
 	// / S2a 在线 / S2b 未在线。绝不把 S1 塌缩成"不可达"（#8 误报）。

@@ -6,6 +6,7 @@ import android.security.keystore.KeyProperties
 import android.util.Base64
 import dev.cnal.mobile.CredentialSink
 import dev.cnal.mobile.Mobile
+import dev.cnal.mobile.SourceSink
 import java.io.File
 import java.security.KeyStore
 import java.time.ZoneId
@@ -238,6 +239,41 @@ object CnalKernel {
         Mobile.setPhysicalSources(v4, v6)
     }
 
+    /**
+     * 换网后重新注入并真正重绑（2026-11-24 源失效自愈）。
+     * injectSources 只写 Go 全局值，注入 v4 是启动快照——四个绑源客户端仍绑旧 IP；
+     * 必须再调 rebindSources 才让内核换绑。换 WiFi / 路由器重启后由 NetworkCallback
+     * 或 SourceStale 回调触发，无需重启守护。
+     */
+    fun reinjectSources(bound: NetBinder.Bound) {
+        injectSources(bound)
+        Mobile.rebindSources()
+    }
+
+    /**
+     * 安装 SourceStale 消费者：Go 侧绑源失效时回调，重新绑 Wi-Fi 取新 LinkProperties
+     * 并重注入。回调在 Go 线程上，必须切到后台线程执行 bind（含 bindProcessToNetwork）。
+     * 一次 bind 直接用到底——不绕 KeeperService 的节流（否则真实 SourceStale 可能被
+     * NetworkCallback 刚触发的 5s 节流吞掉，trouble-maker 重要项）。
+     */
+    fun installSourceStaleSink(context: Context) {
+        Mobile.setSourceSink(object : SourceSink {
+            override fun sourceStale() {
+                // Go 回调线程上不能直接做网络绑定；投递到后台单线程池。
+                sourceStaleExecutor.execute {
+                    val bound = runCatching { NetBinder(context).bind() }.getOrNull()
+                        ?: return@execute
+                    runCatching { reinjectSources(bound) }
+                }
+            }
+        })
+    }
+
+    private val sourceStaleExecutor: java.util.concurrent.ExecutorService =
+        java.util.concurrent.Executors.newSingleThreadExecutor { r ->
+            Thread(r, "source-stale").also { it.isDaemon = true }
+        }
+
     /** 注入用 v6 源：全列表挑 GUA，剥 /prefix；无 GUA 返回空串 = 只 v4。 */
     internal fun pickV6Source(bound: NetBinder.Bound): String =
         PhysicalSource.v6(bound.v6All)?.let { PhysicalSource.ip(it) } ?: ""
@@ -253,6 +289,9 @@ object CnalKernel {
     }
 
     fun stop() {
+        // 先摘掉 SourceStale sink：它持有 Service context，不清理则 Go 全局永久
+        // 引用已销毁的 Activity/Service，停止后到达的回调会对着死 context bind。
+        Mobile.setSourceSink(null)
         Mobile.stop()
         panelUrl = ""
     }

@@ -106,6 +106,54 @@ func CurrentPhysicalSources() PhysicalSources {
 	return PhysicalSources{V4: srcV4, V6: srcV6}
 }
 
+// 注入模式的两个包级缝（仅安卓用，Windows 零调用）：
+//   - activeRebind：已 Compose 的 plumbing 的重绑入口（换网后 Mobile.RebindSources 调）；
+//   - sourceStaleSink：Kotlin 实现的 SourceStale 消费者（绑定失效时通知重新注入）。
+//
+// 都在 newPlumbing 注入模式注册；非注入模式为 nil = no-op。
+var (
+	injectMu        sync.RWMutex
+	activeRebind    func() error
+	sourceStaleSink func()
+)
+
+// RegisterInjectedPlumbing 由 newPlumbing 在注入模式注册重绑入口。
+func RegisterInjectedPlumbing(rebind func() error) {
+	injectMu.Lock()
+	activeRebind = rebind
+	injectMu.Unlock()
+}
+
+// RebindInjectedSources 安卓换网后重绑注入源（AAR 导出 Mobile.RebindSources 的
+// Go 实现）。未注册（非注入/未 Compose）时 no-op。
+func RebindInjectedSources() error {
+	injectMu.RLock()
+	fn := activeRebind
+	injectMu.RUnlock()
+	if fn == nil {
+		return nil
+	}
+	return fn()
+}
+
+// SetSourceStaleSink 注入 SourceStale 消费者（D-09，Kotlin 实现）。
+func SetSourceStaleSink(sink func()) {
+	injectMu.Lock()
+	sourceStaleSink = sink
+	injectMu.Unlock()
+}
+
+// NotifySourceStale 通知 Kotlin 重新注入物理源（注入模式绑定失效时由 plumbing
+// 调用；导出亦供 JNI 桥接/测试直接触发）。无消费者时 no-op。
+func NotifySourceStale() {
+	injectMu.RLock()
+	sink := sourceStaleSink
+	injectMu.RUnlock()
+	if sink != nil {
+		sink()
+	}
+}
+
 // SourcePrinter 网络层诊断打印缝（物理源/重发现/门户选路）：Windows 打到
 // stdout，安卓 stdout 不可见，注入写状态日志的实现。nil = 不打印。
 type SourcePrinter func(format string, args ...any)

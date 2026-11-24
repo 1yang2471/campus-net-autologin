@@ -28,6 +28,7 @@ type plumbing struct {
 	systemLogin  *netstack.Client // 系统栈登录 POST
 	tlsProbe     *netstack.Client // L2 出口观察
 	currentV4    func() net.IP
+	setV4        func(net.IP) // 换绑共享 v4 快照（applyV4 与 rd 共用）
 	currentV6    func() net.IP
 	// netMode 门户选路模式（auto/bound/system，见 config.go）；运行期只读。
 	netMode string
@@ -51,6 +52,14 @@ type plumbing struct {
 	// 但网卡 IP 被 ROM 摘掉时 dialer 仍会 bind 失败；选路前自检一次，失效
 	// 等同源失效处理（清门户缓存 + 触发 rd + 转系统栈）。nil = 旧语义（不检）。
 	bindable func(net.IP) bool
+	// sourceStale 注入模式专用：绑源失效时通知 Kotlin 重新注入物理源（D-09）。
+	// nil = 无消费者（Windows 自动发现路径 / 测试未设置）。
+	// staleMu 保护 sourceStaleFired 的读改写：chooseRoute 被 Tick 与回路 API
+	// 两个 goroutine 并发调用（见 routeMu 注释），重绑又由 Kotlin 后台线程触发，
+	// 裸 bool 会双通知（2026-11-24 trouble-maker 阻断项）。回调在锁外执行。
+	sourceStale      func()
+	staleMu          sync.Mutex
+	sourceStaleFired bool
 	// picker 门户可达性选源器（自动发现路径才有；钉源/注入时为 nil）。
 	picker *netstack.SourcePicker
 }
@@ -203,7 +212,7 @@ func newPlumbing(cfg daemonConfig, user, pass string) (*plumbing, error) {
 		probe: probe, systemProbe: systemProbe,
 		login: loginClient, systemLogin: systemLogin,
 		netMode: cfg.NetMode, logf: printSource,
-		currentV4: currentV4, currentV6: currentV6, handshakeOnce: handshakeOnce,
+		currentV4: currentV4, setV4: setV4, currentV6: currentV6, handshakeOnce: handshakeOnce,
 		// 绑源自检：DNS 缓存命中但网卡 IP 被摘掉时（2026-11-23 过夜缺陷），
 		// chooseRoute 据此判绑源是否仍可用，失效则清缓存+转系统栈。
 		bindable: portal.Bindable,
@@ -236,16 +245,67 @@ func newPlumbing(cfg daemonConfig, user, pass string) (*plumbing, error) {
 			},
 			func(ip net.IP) {
 				printSource("物理源切换: %s → %s（%s）\n", srcStr(currentV4()), srcStr(ip), picker.Summary())
-				setV4(ip) // 共享引用：DNS 解析/L2/门户/v4 源显示全同步
-				p.portal.SetSource(ip)
-				p.probe.SetSource(ip)
-				p.login.SetSource(ip)
-				p.tlsProbe.SetSource(ip)
-				p.pt.invalidate() // 换网后门户 IP 可能变，强制下次重新解析
+				p.applyV4(ip)
 			})
 		p.rd = rd
+	} else if _, _, injected := physicalSources(); injected {
+		// 注入模式：注册重绑入口 + SourceStale 通知（2026-11-24 自愈）。
+		// Kotlin 换网重注入后调 Mobile.RebindSources → activeRebind → 这里重绑；
+		// 绑源失效时 sourceStale → 包级 sink → Kotlin 重新取 LinkProperties。
+		RegisterInjectedPlumbing(func() error { return p.rebindInjectedSources() })
+		p.sourceStale = NotifySourceStale
 	}
 	return p, nil
+}
+
+// applyV4 把新物理 v4 源同步到所有消费点：共享快照（DNS 解析/L2/v4 显示）
+// + 四个绑源客户端 + 门户 IP 缓存。重发现（自动路径）与注入重绑（安卓路径）
+// 共用这一处实现，避免两条路径漂移（2026-11-24 源失效自愈）。
+func (p *plumbing) applyV4(ip net.IP) {
+	p.setV4(ip)
+	p.portal.SetSource(ip)
+	p.probe.SetSource(ip)
+	p.login.SetSource(ip)
+	p.tlsProbe.SetSource(ip)
+	p.pt.invalidate() // 换网后门户 IP 可能变，强制下次重新解析
+}
+
+// rebindInjectedSources 安卓注入源变更后重新绑定：Kotlin 换 WiFi 重新注入
+// setPhysicalSources 后调用（经 Mobile.RebindSources 导出）。注入模式下没有
+// rediscoverer，v4 是启动时捕获的冷快照——不重绑则 currentV4 变了、四个客户端
+// 仍从旧 IP 出去，4 小时 bind 失效即此成因（2026-11-24 调研）。
+// 非注入模式调用是 no-op（自动路径由 rd 管，不抢方向盘）。
+func (p *plumbing) rebindInjectedSources() error {
+	inj4, _, injected := physicalSources()
+	if !injected || inj4 == nil {
+		return nil
+	}
+	// 复位必须在 Equal 判等之前：Android WiFi 重关联后 DHCP 常给**同一个 IP**，
+	// 只是网卡绑定丢了；“重绑被调用”即视为一次恢复尝试完成，允许下次失效再通知。
+	// 绑在「IP 变了」上会让同 IP 失效场景永久沉默（2026-11-24 trouble-maker 阻断项）。
+	p.staleMu.Lock()
+	p.sourceStaleFired = false
+	p.staleMu.Unlock()
+	if inj4.Equal(p.currentV4()) {
+		return nil // 源没变，跳过实际改绑（避免无谓清 DNS 缓存 + 日志抖动）
+	}
+	printSource("物理源重新注入: %s → %s（注入）\n", srcStr(p.currentV4()), srcStr(inj4))
+	p.applyV4(inj4)
+	return nil
+}
+
+// notifySourceStale 单次通知消费者（D-09）：一次失效只发一次，直到重绑复位。
+// 检查+置位在锁内保证原子（并发 chooseRoute 不会双通知），回调在锁外执行。
+func (p *plumbing) notifySourceStale() {
+	p.staleMu.Lock()
+	if p.sourceStale == nil || p.sourceStaleFired {
+		p.staleMu.Unlock()
+		return
+	}
+	p.sourceStaleFired = true
+	cb := p.sourceStale
+	p.staleMu.Unlock()
+	cb()
 }
 
 // deliverPinned 门户登录表单出口（守护主线唯一凭据出口）。双路径：绑源

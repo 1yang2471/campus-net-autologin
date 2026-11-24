@@ -9,6 +9,7 @@ import android.content.pm.ServiceInfo
 import android.net.ConnectivityManager
 import android.net.Network
 import android.net.NetworkCapabilities
+import android.net.LinkProperties
 import android.os.Build
 import android.os.IBinder
 import android.os.PowerManager
@@ -72,7 +73,14 @@ class KeeperService : Service() {
         val cm = getSystemService(ConnectivityManager::class.java)
         val cb = object : ConnectivityManager.NetworkCallback() {
             override fun onLost(network: Network) = wakeOnce("onLost")
-            override fun onAvailable(network: Network) = wakeOnce("onAvailable")
+            override fun onAvailable(network: Network) {
+                wakeOnce("onAvailable")
+                reinjectOnce() // 换 WiFi：重新取 LinkProperties 注入 + 重绑（源失效自愈）
+            }
+            override fun onLinkPropertiesChanged(network: Network, lp: LinkProperties) {
+                // 路由器重启/DHCP 换 IP：IP 变了但 network 对象没换，onAvailable 不会来。
+                reinjectOnce()
+            }
             override fun onCapabilitiesChanged(
                 network: Network, caps: NetworkCapabilities) {
                 val snap = WakeCaps(
@@ -146,6 +154,20 @@ class KeeperService : Service() {
         Mobile.wake(reason)
     }
 
+    /** 换网后重取物理源并重绑（2026-11-24 源失效自愈）。
+     *  与 wakeOnce 分开节流（5s）：onLost+onAvailable+onLinkPropertiesChanged 连发
+     *  会合并成一拍。bind 含 bindProcessToNetwork，必须在后台线程。 */
+    @Volatile private var lastReinjectAt = 0L
+    private fun reinjectOnce() {
+        val now = SystemClock.elapsedRealtime()
+        if (now - lastReinjectAt < 5_000L) return
+        lastReinjectAt = now
+        Thread {
+            val bound = runCatching { binder.bind() }.getOrNull() ?: return@Thread
+            runCatching { CnalKernel.reinjectSources(bound) }
+        }.apply { isDaemon = true; name = "source-reinject" }.start()
+    }
+
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (intent?.action == ACTION_STOP) {
             CnalKernel.stop()
@@ -159,6 +181,9 @@ class KeeperService : Service() {
                 if (kernelWorker == null) {
                     alive = true
                     registerNetCallback() // 事件驱动唤醒（复盘 §3.2）
+                    // Go 绑源失效时通知重注入（D-09）：sink 自带后台线程+一次 bind，
+                    // 不绕 reinjectOnce 的节流（避免真实信号被吞）。
+                    CnalKernel.installSourceStaleSink(this)
                     kernelWorker = Thread(::kernelLoop, "m1-state").also { it.start() }
                 }
             }

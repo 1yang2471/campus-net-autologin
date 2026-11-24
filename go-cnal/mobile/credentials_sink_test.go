@@ -56,6 +56,25 @@ func TestCredentialSinkErrorLeavesMemoryUntouched(t *testing.T) {
 	}
 }
 
+// SourceSink 通知 Kotlin 重新注入物理源（D-09）：绑定失效时 Go 侧只发信号，
+// 真正的 LinkProperties 重取在 Kotlin。这里验证 sink 转发到位（对称 CredentialSink）。
+type sourceSinkFunc func()
+
+func (f sourceSinkFunc) SourceStale() { f() }
+
+func TestSourceSinkNotifiesOnStale(t *testing.T) {
+	resetState(t)
+	t.Cleanup(func() { SetSourceSink(nil); resetState(t) })
+	calls := 0
+	SetSourceSink(sourceSinkFunc(func() { calls++ }))
+
+	// 经 app 层包级通知入口触发（与 plumbing.notifySourceStale 同一条路径）。
+	app.NotifySourceStale()
+	if calls != 1 {
+		t.Fatalf("SourceStale 未通知 Kotlin：calls=%d", calls)
+	}
+}
+
 func TestSetCredentialsBypassesSink(t *testing.T) {
 	resetState(t)
 	t.Cleanup(func() { SetCredentialSink(nil); resetState(t) })

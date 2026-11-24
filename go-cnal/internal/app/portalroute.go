@@ -72,6 +72,10 @@ func (p *plumbing) chooseRoute(bound, system *netstack.Client) portalRoute {
 		// 解析（否则旧 DNS 结果继续粘住）；下面走与解析失败相同的 fallback。
 		p.pt.invalidate()
 		err = errSourceUnbindable
+		// 注入模式自愈信号（D-09）：通知 Kotlin 重新取 LinkProperties 注入源。
+		// 一次失效只通知一次，重绑成功后由 rebindInjectedSources 复位；
+		// 无消费者（Windows/未注入）时 no-op。
+		p.notifySourceStale()
 	}
 	// 解析失败 / 源失效分开报：排障方向不同（查 DNS vs 查网卡）。
 	failKind := "绑源解析失败"
