@@ -3,14 +3,20 @@
 # 只对内核/壳/构建脚本的改动触发；不重启正在运行的托盘（新版本下次启动生效）。
 # 日志：.git/update.log。更新失败不回滚提交，只打印警告。
 #
-# 安装（新克隆）：Copy-Item scripts\hooks\post-commit .git\hooks\post-commit
+# 安装（新克隆，在仓库根执行）：
+#   cp go-cnal/scripts/hooks/post-commit .git/hooks/post-commit && chmod +x .git/hooks/post-commit
+#
+# 2026-11-25 修正：钩子挂在仓库根 .git/，但脚本与源码在 go-cnal/ 下——
+# git show --name-only 给的是仓库根相对路径（go-cnal/cmd/...），正则必须带
+# go-cnal/ 前缀，update.ps1 也要从 go-cnal/scripts/ 取。旧版两处都按 go-cnal/
+# 是仓库根来写，匹配永远落空、钩子永远静默退出。
 set -u
 
 repo=$(git rev-parse --show-toplevel 2>/dev/null) || exit 0
 cd "$repo" || exit 0
 
 changed=$(git show --pretty=format: --name-only HEAD 2>/dev/null |
-    grep -E '^(cmd/|internal/|mobile/|go\.(mod|sum)$|scripts/.*\.ps1$)' || true)
+    grep -E '^go-cnal/(cmd/|internal/|mobile/|go\.(mod|sum)$|scripts/.*\.ps1$)' || true)
 [ -z "$changed" ] && exit 0
 
 log="$repo/.git/update.log"
@@ -24,7 +30,7 @@ trap 'rmdir "$lock" 2>/dev/null' EXIT
 if {
     echo "==== $(date '+%F %T') ===="
     echo "$changed"
-    powershell -NoProfile -ExecutionPolicy Bypass -File "$repo/scripts/update.ps1"
+    powershell -NoProfile -ExecutionPolicy Bypass -File "$repo/go-cnal/scripts/update.ps1"
 } >>"$log" 2>&1; then
     echo "自动更新完成：安装版已是最新（运行中的托盘下次启动生效；-Restart 可立即重启）"
 else

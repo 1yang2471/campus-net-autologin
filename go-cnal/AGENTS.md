@@ -7,21 +7,17 @@
 
 ## 工作方式
 
-- 测试：`go test ./...`（9 包）；`go vet ./...`；改语义必须红→绿→变异检查。
-- **改动收尾自动更新安装版**：`scripts\update.ps1`（构建+安装+哈希验收；运行中的
-  托盘不打断，新 exe 下次启动生效，`-Restart` 才强制重启）。`.git/hooks/post-commit`
-  已接同一脚本（源文件 `scripts/hooks/post-commit`，新克隆按 README 装上）：
-  `cmd/`/`internal/`/`mobile/`/构建脚本的提交会自动跑一次。
-- **变异检查还原只用当场指纹/备份，禁用 `git checkout`**（会吞掉未提交的改动）。
-- 提交被 `scripts/check-file-size.sh`（钩子已装在 `.git/hooks/pre-commit`）拒了：
-  照报错把文件按功能拆小再提交，别调大上限。
+- 测试：`go vet ./...`；改语义必须红→绿→变异检查（测试命令的唯一出处是仓库根 `.test-gate.json`）。
+- **改动收尾自动更新安装版**：`.git/hooks/post-commit`（源文件 `scripts/hooks/post-commit`，
+  2026-11-25 装上）在 `cmd/`/`internal/`/`mobile/`/构建脚本提交后自动跑
+  `scripts\update.ps1`（构建+安装+哈希验收；运行中的托盘不打断，新 exe 下次启动生效，
+  `-Restart` 才强制重启）。日志在 `.git/update.log`。手动跑：
+  `powershell -File scripts\update.ps1`。
 - 写新函数/新规则前先搜项目里有没有现成的（例：握手构造收敛为 app 的
   `handshakeOnce`；v6 文案唯一出处是 `keeper.V6Label`）。
 - **判据先量再写**：截图里看到的"残片/异常"先回放真实数据确认是数据 bug 还是
   渲染裁切，再改代码；没被红灯证明的改动与"构造没复现却通过"的测试都撤回
   （2026-11-08 日志卡 TISW 残影误判，已撤回投机改动与假测试）。
-
-完整实测故事（坑 12–21）已迁至 `docs/AGENTS-坑位实测故事.md`，此处不重复。
 
 ## 规则表
 
@@ -45,13 +41,15 @@
 | 面板模式缺省 native | `TestOpenPanelByModeBrowser` + `TestPanelModeFromIniAndEnv` |
 | status 只读且不猜端点 | `TestStatusReportNoDaemon` + `TestReadRuntimeFileRejectsIncomplete` + `TestDispatchStatusAliases` |
 | 异校登录表单三路同源 | `TestParseFormRejectsInvalid` + `TestLoginActionUsesConfiguredForm` + `TestDoRebindUsesConfiguredForm` |
-| 切账号必须认证一次且降级不静默 | `TestSwitchAccountAuthenticatesWithNewAccount` + `TestDoReportsV6DegradedOnHandshakeFail` + `TestSwitchAccountReportsDegradedV6` |
+| 切账号先注销再认证且降级不静默 | `TestSwitchAccountReleasesBeforeAuthenticating` + `TestSwitchAccountRejectsMissingPassword` + `TestDoReportsV6DegradedOnHandshakeFail` |
 | 异校判定层覆盖度不静默回退 | `TestCorpusReplayDefaultMarksSufficient` + `TestCorpusReplayMarksOverrideNecessaryAndSufficient` + `TestCorpusReplayUnfixableGapsAreReal`（覆盖度漂移即红；语料与来源见 `docs/corpus-异校响应语料.md`） |
 
 ## 路标
 
-- 设计规格（双栈语义、E4/E7/E19、§5.1 四态、§11 安卓前提 A1-A5）：
-  `../campus-net-autologin/docs/superpowers/specs/2026-11-06-dualstack-and-go-port-design.md`
+- 双栈语义与 A1–A5 判据（现行）：`docs/android-a1-a5-testplan.md`；实测结果按轮次见
+  `docs/android-a1-a5-result-2026-11-2*.md`（§0–§5 在主文件，§6 起各轮独立，主文件末尾有索引）
+- 2026-11-06 设计规格（E1–E11 证据、§5.1 四态）已随 Python 退役在 `be44d30` 删除，
+  需要时取回：`git show be44d30^:docs/superpowers/specs/2026-11-06-dualstack-and-go-port-design.md`
 - `docs/screenshots/`：界面验收证据（托盘四态图标等）。
 - 回路契约：`internal/api`（127.0.0.1 + 随机 token，面板/托盘同一来源）。
 

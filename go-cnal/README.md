@@ -123,7 +123,7 @@ cnal status                      # 只读查看运行中守护的状态（走本
 同一脚本，安装版不会落后于源码。新克隆启用它：
 
 ```powershell
-Copy-Item scripts\hooks\post-commit .git\hooks\post-commit
+Copy-Item go-cnal\scripts\hooks\post-commit .git\hooks\post-commit
 ```
 
 发布前验收（真 Chrome 走一遍面板全流程断言 + 四张截图）：
@@ -131,5 +131,4 @@ Copy-Item scripts\hooks\post-commit .git\hooks\post-commit
 
 设计规格、踩坑清单、回路契约见 `DESIGN.md` / `AGENTS.md` / `internal/api`；
 安卓版方案见 `docs/android-plan.md`（A1–A5 真机测试计划
-`docs/android-a1-a5-testplan.md`）；Python/Go 两版对比见
-`docs/python-vs-go.md`，从 Python 版迁移见 `docs/migration-python-to-go.md`。
+`docs/android-a1-a5-testplan.md`）。

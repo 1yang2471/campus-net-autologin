@@ -1,5 +1,5 @@
 # 打包脚本更新：cnalw 链接图标资源（syso 随 go build 自动生效）。
-param([string]$Version = "1.0.0")
+param([string]$Version = "2.4.1-go")
 $ErrorActionPreference = "Stop"
 
 $go = "C:\Program Files\Go\bin\go.exe"
