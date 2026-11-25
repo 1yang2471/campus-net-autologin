@@ -184,6 +184,83 @@ func TestProbeAnchorClassifies(t *testing.T) {
 	}
 }
 
+// 行为（2026-11-25 过夜轮，A1 结果 §9）：bind 失效的文案必须区分三种现场，
+// 否则排障被误导——MIUI 睡眠模式直接关 WiFi 时连续 13 拍全报
+// `bind: cannot assign requested address`，与「网卡 IP 被摘」同文案，
+// 容易被读成源失效自愈失败（v2.4.1 P0 因此一度被误判）。
+func TestBindHintDistinguishesScenes(t *testing.T) {
+	mkAddr := func(s string) net.Addr {
+		return &net.IPNet{IP: net.ParseIP(s), Mask: net.CIDRMask(24, 32)}
+	}
+	src := net.ParseIP("192.0.2.10")
+	cases := []struct {
+		name  string
+		src   net.IP
+		addrs []net.Addr
+		want  string
+	}{
+		{
+			name:  "源地址仍在网卡上（绑定被拒，非源失效）",
+			src:   src,
+			addrs: []net.Addr{mkAddr("192.0.2.10")},
+			want:  "源地址仍在网卡上",
+		},
+		{
+			name:  "源地址消失但仍有其它 IPv4（接口重建/换网）",
+			src:   src,
+			addrs: []net.Addr{mkAddr("198.51.100.7")},
+			want:  "仍有其它 IPv4",
+		},
+		{
+			name:  "本机已无任何非环回 IPv4（WiFi/数据被系统关闭）",
+			src:   src,
+			addrs: []net.Addr{mkAddr("127.0.0.1")},
+			want:  "网卡均未持有地址",
+		},
+		{
+			name:  "无源地址时不加提示",
+			src:   nil,
+			addrs: []net.Addr{mkAddr("198.51.100.7")},
+			want:  "",
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got := bindHint(c.src, c.addrs)
+			if c.want == "" {
+				if got != "" {
+					t.Fatalf("无源地址应返回空提示，实际 %q", got)
+				}
+				return
+			}
+			if !strings.Contains(got, c.want) {
+				t.Fatalf("提示 = %q，应含 %q", got, c.want)
+			}
+		})
+	}
+}
+
+// 行为：probeAnchor 判出 bind 失效时必须把上面的现场提示带进 Detail——
+// 内核的状态行/日志直接用它，接不上等于没写。
+func TestProbeAnchorBindFailureCarriesHint(t *testing.T) {
+	old := localAddrs
+	localAddrs = func() ([]net.Addr, error) {
+		// 只留环回：模拟「WiFi 与数据都被关」，与 2026-11-25 02:28 现场同形。
+		return []net.Addr{&net.IPNet{IP: net.ParseIP("127.0.0.1"), Mask: net.CIDRMask(8, 32)}}, nil
+	}
+	defer func() { localAddrs = old }()
+
+	c := netstack.New(net.ParseIP("192.0.2.10"), time.Second) // 本机不存在的源地址 → 必然 bind 失败
+	cfg := daemonConfig{ProbeIPs: []string{"127.0.0.1:1"}, ProbePath: "/generate_204"}
+	out := probeAnchor(c, cfg)
+	if out.OK || out.Kind != l1BindInvalid {
+		t.Fatalf("应判绑定失效，实际 %+v", out)
+	}
+	if !strings.Contains(out.Detail, "网卡均未持有地址") {
+		t.Fatalf("Detail 应带「本机无可用 IPv4」提示，实际 %q", out.Detail)
+	}
+}
+
 // 行为（2026-11-21 实测事故）：锚点探测不得被探测域名白名单骗绿。校园把
 // connect.rom.miui.com 放行（detect.go probeHostVariants 2026-11-11 实测），
 // 带该 Host 的未认证请求拿到真 404，probeAnchor 旧实现把它判「在线」——

@@ -2,6 +2,7 @@ package app
 
 import (
 	"fmt"
+	"net"
 	"strings"
 
 	"cnal/internal/keeper"
@@ -104,6 +105,46 @@ func classifyL1Err(err error) (kind, detail string) {
 	}
 }
 
+// localAddrs 本机地址来源（测试可替换）。只在 bind 失效时读一次。
+var localAddrs = net.InterfaceAddrs
+
+// bindHint 给 bind 失效的原始错误补一句现场判断（2026-11-25 过夜轮 A1 §9）：
+//   - 源地址仍在网卡上 → 绑定被拒，不是源失效；
+//   - 源地址不在、但本机还有别的非环回 IPv4 → 接口重建/换网；
+//   - 本机一个非环回 IPv4 都没有 → 根本没网（WiFi 与数据都被系统关了），
+//     重选与重注入都无源可绑。
+// 只写观测到的事实，不写猜出来的成因。
+func bindHint(src net.IP, addrs []net.Addr) string {
+	want := src.To4()
+	if want == nil {
+		return "" // 无源地址（系统栈/未绑源）：不添话
+	}
+	present, other := false, false
+	for _, a := range addrs {
+		n, ok := a.(*net.IPNet)
+		if !ok {
+			continue
+		}
+		ip4 := n.IP.To4()
+		if ip4 == nil || ip4.IsLoopback() {
+			continue
+		}
+		if ip4.Equal(want) {
+			present = true
+		} else {
+			other = true
+		}
+	}
+	switch {
+	case present:
+		return "；源地址仍在网卡上，绑定被拒"
+	case other:
+		return "；源地址已从网卡消失，但本机仍有其它 IPv4"
+	default:
+		return "；本机已无任何非环回 IPv4（网卡均未持有地址）"
+	}
+}
+
 // probeAnchor 对给定客户端跑一遍公网锚点（物理栈/系统栈共用同一套判定）：
 // 204/非劫持页 = 通；302/200 型门户页/连接失败 = 不通，并带原因。
 // 物理栈客户端由调用方负责绑源；系统栈客户端跟浏览器同路。
@@ -137,6 +178,12 @@ func probeAnchor(c *netstack.Client, cfg daemonConfig) l1Outcome {
 			st, body, err := c.GetStatus("http://"+ip+cfg.ProbePath, hdrs)
 			if err != nil {
 				kind, detail := classifyL1Err(err)
+				if kind == l1BindInvalid {
+					// 相机现场：源地址还在不在、本机还有没有别的 IPv4。
+					if addrs, aerr := localAddrs(); aerr == nil {
+						detail += bindHint(c.Source(), addrs)
+					}
+				}
 				note(l1Outcome{Kind: kind, Detail: detail})
 				// err（RST/丢包/超时）后不再问带 Host 的第二变体（trouble-maker
 				// P1-4）：白名单形态拿 404 会把红覆盖成假绿——「劫持终局」只封住了
