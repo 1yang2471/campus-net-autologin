@@ -13,5 +13,11 @@ build/
 # 安全扫描器缓存
 .mimosa/
 
+# claimrail 本机运行态快照（不入库）
+.claimrail/last-delivery.json
+.claimrail/violations.jsonl
+.claimrail/storage.json
+.claimrail/shots/
+
 # 验证截图（含本机内网 IP，不入库）
 shot_*.png
