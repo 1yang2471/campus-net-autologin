@@ -502,7 +502,7 @@ func (c *Client) Bindable(src net.IP) bool {
 	if src.To4() == nil {
 		network = "udp6"
 	}
-	pc, err := lc.ListenPacket(context.Background(), network, src.String())
+	pc, err := lc.ListenPacket(context.Background(), network, net.JoinHostPort(src.String(), "0"))
 	if err != nil {
 		info.Err = err
 		c.noteBind(info)

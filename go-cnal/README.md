@@ -1,6 +1,6 @@
 # go-cnal · 校园网守护（Go 版）
 
-校园网守护主实现：物理栈绑源探测、ac_portal 族双栈登录、托盘 + 面板。
+校园网守护主实现：Windows 接口级绑源探测、ac_portal 族双栈登录、托盘 + 面板。
 Windows 用户级安装，不需要管理员权限。
 
 ## 适用范围（先看这个）
@@ -8,8 +8,8 @@ Windows 用户级安装，不需要管理员权限。
 - **支持**：ac_portal 族（华为 AC 系 Portal 部署）+ 账号密码登录。
 - **不支持**：深澜 Srun、Dr.COM / 锐捷 eportal 等协议族。`cnal compat --detect`
   只能告诉你「这是别的协议族」，不能代替它们登录。
-- **平台**：Windows。Android 版已起 M0 测量壳（独立仓库 `../go-cnal-android`，
-  纯 Kotlin 不接内核），**A1–A5 真机门槛未过，产品形态未定**。
+- **平台**：Windows 主发布；Android M1 已发布（Go 内核 AAR + 前台服务，见
+  `../go-cnal-android`），其真机边界以该目录 README 为准。
 - **验证程度**：**已验证 1 所**（参考校真机）；**异校实测 0 所**。异校可配项（端点 /
   `[response]` 词表 / `login_form` 登录字段名 / 探测锚点）有表驱动测试覆盖，但
   **尚未在任何异校真实验证**——「异校可配」是设计目标，不是已验证事实。
@@ -34,10 +34,11 @@ Windows 用户级安装，不需要管理员权限。
 设置面板收集账号密码；也可先跑 `cnal detect --write` 看探测结果）。
 密码只存 Windows 凭据管理器，ini 里 `password = <keyring>` 是占位符。
 
-`campus_dns` 强烈建议填真值（门户钉 IP 与物理源选路都靠它；留空回退系统
-DNS，TUN 环境下可能拿到 fake-ip）。**面板常用区管 6 项，高级折叠区管网络
-参数与 `[response]` 词表**；双栈词表（`dual_stack`/`v6_peer`/`peer_opr`/
-`peer_path`）仍需直接编辑 ini（键清单见下）。
+`campus_dns` 强烈建议填 IP 字面量（门户钉 IP 与物理源选路都靠它）；v2.4.2 的
+严格接口模式不会用系统 DNS 冒充绑源解析。`strict_interface_bind=true` 为
+Windows 默认，绑定失败即 fail-closed；`false` 才降级为仅绑源 IP。面板常用区管
+6 项，高级折叠区管网络参数与 `[response]` 词表；严格模式、`net_mode` 与
+Clash API 目前直接编辑 ini，保存后重启生效。
 
 ## 三个 exe
 
@@ -77,6 +78,9 @@ DNS，TUN 环境下可能拿到 fake-ip）。**面板常用区管 6 项，高级
 - `free_windows`：免认证时段（夜间不自动登录，防撞门户反暴力冻结）
 - `dual_stack` / `v6_peer` / `peer_opr` / `peer_path`：双栈补绑（异校可全关）
 - `bind_ip`：物理源逃生口（空 = 自动发现）
+- `strict_interface_bind`：Windows 默认 true；false 允许接口绑定失败时降级
+- `net_mode`：`auto` / `bound` / `system`；`system` 是显式系统栈覆盖
+- `clash_api_url` / `clash_api_secret`：仅本机回环的 Mihomo fake-ip flush，默认关
 - `auto_reconnect`：掉线自动重连开关（面板/托盘可热改）
 - `multi_channel`：多通道自愈开关（未认证的其它网卡自动补登；与主链路共用账号级登录预算，默认关）
 - `panel_mode`：`native`（缺省，WebView2 原生窗口）/ `browser`（系统浏览器，

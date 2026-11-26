@@ -10,7 +10,7 @@
         { "label": "WFP 驱动或独立 Helper", "target": { "file": "go-cnal/scripts/install.ps1" } }
       ],
       "picked": "socket 接口级绑定",
-      "evidence": { "kind": "repo", "ref": "go-cnal/internal/netstack/client.go:185", "asserts": ["LocalAddr", "物理栈"] },
+      "evidence": { "kind": "repo", "ref": "go-cnal/internal/netstack/client.go:221", "asserts": ["物理栈", "LocalAddr"] },
       "target": { "file": "go-cnal/internal/netstack/client.go", "symbol": "dialer" },
       "cost_if_wrong": "high",
       "verified": true
@@ -47,7 +47,7 @@
         { "label": "v2.5.0-go", "target": { "file": "go-cnal/scripts/build.ps1" } }
       ],
       "picked": "v2.4.2-go",
-      "evidence": { "kind": "repo", "ref": "go-cnal/scripts/build.ps1:2", "asserts": ["2.4.1-go"] },
+      "evidence": { "kind": "memory", "ref": "log#3", "asserts": ["v2.4.2-go", "不发布 Android"] },
       "target": { "file": "go-cnal/scripts/build.ps1" },
       "cost_if_wrong": "high",
       "verified": true

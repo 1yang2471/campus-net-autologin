@@ -119,9 +119,9 @@
    "picked": "新公开只读方法 LastAction()：View 签名不动，快照闭包单独取读数",
    "evidence": {
     "kind": "repo",
-    "ref": "go-cnal/internal/keeper/daemon_probe.go:200-204",
+    "ref": "go-cnal/internal/keeper/daemon_action.go:21",
     "asserts": [
-     "可见缝",
+     "LastAction",
      "加锁读"
     ]
    },
@@ -187,10 +187,10 @@
    "picked": "time.Time 值字段 + omitempty：零时刻仍会序列化，面板以 last_action 空为准（任务规格字面形态）",
    "evidence": {
     "kind": "repo",
-    "ref": "go-cnal/internal/api/api.go:134",
+    "ref": "go-cnal/internal/api/api.go:71",
     "asserts": [
-     "Flux",
-     "omitempty"
+     "omitempty",
+     "time.Time"
     ]
    },
    "target": {
@@ -295,12 +295,12 @@
    ],
    "picked": "用 11-23 过夜实测改写 A2：进程活过、Doze WiFi 断窗 5h 未过、仅 MIUI 已验",
    "evidence": {
-    "kind": "memory",
-    "ref": "log#25",
+    "kind": "repo",
+    "ref": "go-cnal/docs/2026-11-18-公开发布评估.md:86-91",
     "asserts": [
      "仅 MIUI 单机单夜",
-     "进程存活与网络会话保持分开判定",
-     "不得写全过"
+     "A2 不完整过",
+     "不得写成"
     ]
    },
    "cost_if_wrong": "high",

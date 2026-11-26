@@ -1,6 +1,6 @@
 # go-cnal 特有坑：实测故事全文
 
-> 本文由 2026-11-11 tidy 瘦身从 `AGENTS.md` 原样迁出，逐字未改。
+> 本文由 2026-11-11 tidy 瘦身从 `AGENTS.md` 原样迁出；2026-11-26 追加接口级绑网与 Clash 联动更正。
 > `AGENTS.md` 只留「规则 → 由什么拦住」表和一行路标；需要背景时读本文。
 > **历史说明（2026-11-20）**：Python 版已退役，文中对 `keeper.py` 等文件的引用
 > 保留为历史对照，不再对应仓库内现存文件。
@@ -9,12 +9,13 @@
 
 ## 特有坑（踩过的，别再踩）
 
-0. **clash API 恢复（clash_recover）明确不移植**（2026-11-07 评估）：用户配置即为空、
-   Python 注释自认"可选增强默认关，不配即靠代理软件自身心跳恢复（通用主路径）"。
-   别把它当"功能面差距"补回来——那是给从未走过的路径付维护成本。
+0. **Clash API 联动只做 fake-ip flush**（2026-11-26 起）：仅允许本机回环 HTTP，
+   登录/补绑成功后 `POST /cache/fakeip/flush`，2 秒超时，失败只告警不阻断认证。
+   不要扩到非回环地址、secret 日志或 `/connections` 全断接口。
 
-1. **物理栈纪律**：所有请求必须绑源发出——代理 TUN（FlClash）会抢默认路由与 DNS，
-   不绑源读到的是隧道出口。这就是 `internal/netstack` 存在的理由。
+1. **物理栈纪律**：Windows 必须同时绑源 IP 与接口索引——单独 `LocalAddr`
+   不能阻止路由型 TUN 接管 socket。HTTP、DNS、TLS 探测和 Bindable 共用同一
+   Control；严格模式失败即 fail-closed。这就是 `internal/netstack` 存在的理由。
 2. **选源只用 `DiscoverSource`（v4）/ `PhysicalSourceV6`（v6）**，不要枚举取第一个：
    2026-11-07 实测旧法选中 FlClash TUN 的 `28.0.0.1`，新法选中物理 Wi-Fi。两条
    契约测试守着它（含"未选中虚拟网卡地址"回归守卫）。
@@ -40,7 +41,8 @@
    必然超时——登录/补绑/flux 全部打不到门户。组合根用 `portalTarget`（校园 DNS
    绑源解析 + TTL 缓存）+ `PostPinned`/`Get(ipPin)`，解析失败返回 nil 不猜地址
    （Python `_portal_target` / P1-13 同源）。`ResolveBound` 的 campus_dns 裸 IP
-   必须经 `normalizeDNSServer` 补 :53，否则报 `missing port` 静默降级。
+   必须经 `normalizeDNSServer` 补 :53，否则报 `missing port` 静默降级；严格接口
+   模式只接受 IP 字面量，不接受需系统解析的 DNS 主机名。
 10. **登录 POST 带 UA + Referer**：Python `_headers` 同源；裸 Go 客户端会被 WAF
     慢回复/挂起。超时独立 `login_timeout`（0=自适应 max(6s,2×probe)），不复用
     `probe_timeout`（RADIUS 后端 3-6s 才回，Python P1-7 实测结论）。CLI 也必须

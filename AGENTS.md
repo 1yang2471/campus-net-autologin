@@ -10,7 +10,7 @@
 
 ## 项目特有的坑
 
-- **探测/登录必须走物理栈**：绑定物理网卡源 IP + 校园网 DNS 解析后钉 IP，绕开 Clash/FlClash 的 TUN fake-ip。不要改回朴素 `requests`/系统 DNS——曾因 TUN 漏判一次时段切换。
+- **探测/登录必须走物理栈**：Windows 在 connect/bind 前用 `IP_UNICAST_IF`/`IPV6_UNICAST_IF` 绑定源 IP 所属接口，校园 DNS 解析后钉 IP；`strict_interface_bind=true` 时绑定失败不得转系统栈发凭据。不要改回朴素 `requests`、仅绑 IP 或系统 DNS——TUN 下曾漏判时段切换。
 - **凭据只在 keyring**：真实密码存 Windows 凭据管理器，`config.ini` 只留 `<keyring>` 占位。`config.ini`、`keeper.log*`、`cookies.pkl`、`credentials.json` 均 gitignored，禁止提交真实凭据或内网 IP。
 - **文档不得说未发布的话**：改 README 前核对实际发布版本，禁止宣称未复现/未发布能力。异校词表、双栈对端参数（`v6_peer`/`peer_opr`/`peer_path`）须实测再写，留空即关闭。
 - **出包走 onedir**：`go-cnal/scripts/` 打包（onedir 非 onefile，降杀毒误报）；`dist/`、`build/` 不入库。

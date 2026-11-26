@@ -15,6 +15,9 @@ labels: compatibility
 - DHCP 租约时长（`ipconfig /all` 里 Lease Expires − Lease Obtained；短租约≈频繁换 IP）：
 - Windows 联网指示（同时双网卡时是否误报「无 Internet」）：是 / 否 / 不适用
 - 本机是否装过代理/加速器（Clash 等，仅写有没有）：
+- 代理模式（系统代理 / TUN / WFP 或游戏加速器 / 不确定）：
+- 面板「门户路径」中的绑定诊断（接口绑定 / 降级：仅绑源 / 接口绑定失败）：
+- `/state` 的 `bind_mode` / `bind_interface` / `bind_index` / `bind_degraded`（可脱敏）：
 
 ## 1. 协议指纹（先判族，不联网）
 
