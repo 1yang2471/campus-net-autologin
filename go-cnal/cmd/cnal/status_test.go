@@ -69,11 +69,12 @@ func TestFormatStatus(t *testing.T) {
 		State: "online", Label: "在线", Detail: "会话正常",
 		V6State: "ok", V6Label: "IPv6 在线",
 		V4Src: "172.29.1.2", V6Src: "2408::1",
+		BindMode: "interface", BindInterface: "WLAN 2", BindIndex: 9,
 		Extra: map[string]bool{"session_dead": false, "free_mode": false, "auto_reconnect": true},
 	})
 	for _, want := range []string{
 		"状态: 在线", "详情: 会话正常", "v6: IPv6 在线",
-		"v4 源: 172.29.1.2", "v6 源: 2408::1",
+		"v4 源: 172.29.1.2", "v6 源: 2408::1", "绑定: interface WLAN 2(#9)",
 		"会话: 正常", "免会话检测: 未触发", "自动重连: 开",
 	} {
 		if !strings.Contains(out, want) {

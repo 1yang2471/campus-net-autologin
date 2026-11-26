@@ -91,6 +91,22 @@ func formatStatus(s api.Snapshot) string {
 	}
 	fmt.Fprintf(&b, "v4 源: %s\n", orUnknown(s.V4Src))
 	fmt.Fprintf(&b, "v6 源: %s\n", orUnknown(s.V6Src))
+	if s.BindMode != "" {
+		desc := s.BindMode
+		if s.BindInterface != "" {
+			desc += " " + s.BindInterface
+			if s.BindIndex > 0 {
+				desc += fmt.Sprintf("(#%d)", s.BindIndex)
+			}
+		}
+		if s.BindDegraded {
+			desc += "（降级）"
+		}
+		if s.BindError != "" {
+			desc += "：" + s.BindError
+		}
+		fmt.Fprintf(&b, "绑定: %s\n", desc)
+	}
 	var parts []string
 	if v, ok := s.Extra["session_dead"]; ok {
 		parts = append(parts, "会话: "+pick(v, "已失效", "正常"))
