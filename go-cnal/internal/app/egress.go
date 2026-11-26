@@ -1,6 +1,7 @@
 package app
 
 import (
+	"errors"
 	"fmt"
 	"net"
 	"strings"
@@ -89,7 +90,8 @@ func classifyL1Err(err error) (kind, detail string) {
 	}
 	s := strings.ToLower(err.Error())
 	switch {
-	case strings.Contains(s, "bind:"),
+	case errors.Is(err, netstack.ErrInterfaceBind),
+		strings.Contains(s, "bind:"),
 		strings.Contains(s, "not valid in its context"),
 		strings.Contains(s, "cannot assign requested address"):
 		return l1BindInvalid, err.Error()

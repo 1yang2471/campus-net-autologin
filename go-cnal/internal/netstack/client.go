@@ -27,10 +27,18 @@ type Client struct {
 	system   bool // 不绑源：走系统默认路由（构造后不变，无需加锁）
 	perTry   time.Duration
 	insecure bool
+	bindMode BindMode
+
+	bindMu   sync.Mutex
+	lastBind BindingInfo
 }
 
 func New(src net.IP, timeout time.Duration) *Client {
-	return &Client{src: src, perTry: timeout}
+	return NewWithBindMode(src, timeout, DefaultBindMode())
+}
+
+func NewWithBindMode(src net.IP, timeout time.Duration, mode BindMode) *Client {
+	return &Client{src: src, perTry: timeout, bindMode: mode}
 }
 
 // NewSystem 系统栈客户端：不绑源、不钉 IP，域名交给系统/代理解析（TUN 下与
@@ -46,6 +54,24 @@ func (c *Client) SetSource(ip net.IP) {
 	c.mu.Lock()
 	c.src = ip
 	c.mu.Unlock()
+}
+
+func (c *Client) SetBindMode(mode BindMode) {
+	c.mu.Lock()
+	c.bindMode = mode
+	c.mu.Unlock()
+}
+
+func (c *Client) noteBind(info BindingInfo) {
+	c.bindMu.Lock()
+	c.lastBind = info
+	c.bindMu.Unlock()
+}
+
+func (c *Client) BindingInfo() BindingInfo {
+	c.bindMu.Lock()
+	defer c.bindMu.Unlock()
+	return c.lastBind
 }
 
 // source 读当前源（每请求取一次，不缓存到局部变量之外）。
@@ -77,15 +103,25 @@ func (c *Client) Bindable(src net.IP) bool {
 	if src == nil {
 		return false // 物理栈未绑源：dialer 本就 fail-closed
 	}
+	c.mu.RLock()
+	mode := c.bindMode
+	c.mu.RUnlock()
+	lc, info, err := bindableListener(src, mode)
+	c.noteBind(info)
+	if err != nil {
+		return false
+	}
 	network := "udp4"
 	if src.To4() == nil {
 		network = "udp6"
 	}
-	l, err := net.ListenUDP(network, &net.UDPAddr{IP: src})
+	pc, err := lc.ListenPacket(context.Background(), network, net.JoinHostPort(src.String(), "0"))
 	if err != nil {
+		info.Err = err
+		c.noteBind(info)
 		return false
 	}
-	_ = l.Close()
+	_ = pc.Close()
 	return true
 }
 
@@ -192,7 +228,12 @@ func (c *Client) dialer() (*net.Dialer, error) {
 	if src == nil {
 		return nil, errors.New("未绑定源地址：物理栈纪律不允许")
 	}
-	return &net.Dialer{LocalAddr: &net.TCPAddr{IP: src}, Timeout: c.perTry}, nil
+	c.mu.RLock()
+	mode := c.bindMode
+	c.mu.RUnlock()
+	d, info, err := makeDialer(src, "tcp", c.perTry, mode)
+	c.noteBind(info)
+	return d, err
 }
 
 func (c *Client) doStatusFull(method, rawURL string, headers map[string]string, ipPin string) (int, http.Header, string, error) {
