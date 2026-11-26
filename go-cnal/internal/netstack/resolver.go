@@ -21,18 +21,32 @@ import (
 // 当成 DNS 劫持会挡掉真门户。凭据会不会发错地方改由**证书主机名校验**把关
 // （netstack/client.go 的 hostOnlyVerifier），那才是能证伪的判据。
 func ResolveBound(src net.IP, dnsServer, host string, timeout time.Duration) (net.IP, error) {
+	return ResolveBoundWithBindMode(src, dnsServer, host, timeout, DefaultBindMode())
+}
+
+func ResolveBoundWithBindMode(src net.IP, dnsServer, host string, timeout time.Duration, mode BindMode) (net.IP, error) {
 	if src == nil {
 		return nil, errors.New("未绑定源地址：物理栈纪律不允许")
 	}
 	dnsServer = normalizeDNSServer(dnsServer)
-	d := &net.Dialer{
-		LocalAddr: &net.UDPAddr{IP: src},
-		Timeout:   timeout,
+	if mode == BindModeInterface {
+		dnsHost, _, err := net.SplitHostPort(dnsServer)
+		if err != nil || net.ParseIP(dnsHost) == nil {
+			return nil, fmt.Errorf("%w: 严格模式 campus_dns 必须是 IP 字面量", ErrInterfaceBind)
+		}
+	}
+	network := "udp4"
+	if src.To4() == nil {
+		network = "udp6"
+	}
+	d, _, err := makeDialer(src, network, timeout, mode)
+	if err != nil {
+		return nil, fmt.Errorf("绑源 DNS 拨号失败: %w", err)
 	}
 	res := &net.Resolver{
 		PreferGo: true,
-		Dial: func(ctx context.Context, network, address string) (net.Conn, error) {
-			return d.DialContext(ctx, "udp", dnsServer)
+		Dial: func(ctx context.Context, _, _ string) (net.Conn, error) {
+			return d.DialContext(ctx, network, dnsServer)
 		},
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)

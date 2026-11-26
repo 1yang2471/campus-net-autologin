@@ -23,18 +23,25 @@ import (
 // verifyChain=false 时跳过 CA 链但仍比对主机名）。任何一步失败都返回带原因的
 // 错误，供面板/日志说人话。
 func ProbePortal(src net.IP, dnsServer, host, port string, timeout time.Duration, verifyChain bool) error {
+	return ProbePortalWithBindMode(src, dnsServer, host, port, timeout, verifyChain, DefaultBindMode())
+}
+
+func ProbePortalWithBindMode(src net.IP, dnsServer, host, port string, timeout time.Duration, verifyChain bool, mode BindMode) error {
 	if src == nil {
 		return errors.New("未绑定源地址：物理栈纪律不允许")
 	}
 	if timeout <= 0 {
 		timeout = 3 * time.Second
 	}
-	ip, err := ResolveBound(src, dnsServer, host, timeout)
+	ip, err := ResolveBoundWithBindMode(src, dnsServer, host, timeout, mode)
 	if err != nil {
 		return fmt.Errorf("解析门户地址失败: %w", err)
 	}
 	addr := net.JoinHostPort(ip.String(), port)
-	d := &net.Dialer{LocalAddr: &net.TCPAddr{IP: src}, Timeout: timeout}
+	d, _, err := makeDialer(src, "tcp", timeout, mode)
+	if err != nil {
+		return fmt.Errorf("创建门户拨号器失败: %w", err)
+	}
 	conn, err := d.Dial("tcp", addr)
 	if err != nil {
 		return fmt.Errorf("连门户 %s 失败: %w", addr, err)

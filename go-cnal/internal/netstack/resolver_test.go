@@ -3,6 +3,7 @@ package netstack
 import (
 	"bytes"
 	"encoding/binary"
+	"errors"
 	"net"
 	"testing"
 	"time"
@@ -19,6 +20,16 @@ func TestResolveBoundRejectsFakeIP(t *testing.T) {
 	ip, err := ResolveBound(net.IPv4(127, 0, 0, 1), server, "probe.example.test", 2*time.Second)
 	if err == nil || ip != nil {
 		t.Fatalf("fake-ip 应答必须被拒且不得返回地址: %v, %v", ip, err)
+	}
+}
+
+func TestResolveBoundStrictInterfaceFailureSendsNoDNS(t *testing.T) {
+	old := interfaceSnapshots
+	t.Cleanup(func() { interfaceSnapshots = old })
+	interfaceSnapshots = func() ([]interfaceSnapshot, error) { return nil, nil }
+	server := fakeDNS(t, net.ParseIP("1.1.1.2"))
+	if _, err := ResolveBoundWithBindMode(net.ParseIP("127.0.0.1"), server, "portal.example.test", time.Second, BindModeInterface); !errors.Is(err, ErrInterfaceBind) {
+		t.Fatalf("严格接口失败应返回 ErrInterfaceBind，实际 %v", err)
 	}
 }
 
