@@ -39,6 +39,13 @@ type Snapshot struct {
 	// Route 门户路径读数（面板「门户路径」行）："绑源钉 IP（钉 1.1.1.2:443）"
 	// 或 "系统栈（绑源解析失败…，转系统栈）"。空 = 还没选过路。
 	Route string `json:"route,omitempty"`
+	// 物理栈绑定诊断：interface=接口级绑定，source_only=仅绑源 IP。
+	// Degraded=true 表示严格模式关闭后发生了降级；旧客户端可忽略。
+	BindMode      string `json:"bind_mode,omitempty"`
+	BindInterface string `json:"bind_interface,omitempty"`
+	BindIndex     int    `json:"bind_index,omitempty"`
+	BindDegraded  bool   `json:"bind_degraded,omitempty"`
+	BindError     string `json:"bind_error,omitempty"`
 	// 双读数（2026-11-18）：认证读数（物理栈）+ 用户路径读数（系统栈）。
 	// 旧客户端读不到这些键（omitempty）；面板/托盘按需显示。
 	AuthState   string          `json:"auth_state,omitempty"`

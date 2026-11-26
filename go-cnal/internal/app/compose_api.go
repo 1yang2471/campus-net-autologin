@@ -62,6 +62,16 @@ func newAPI(cfg *daemonConfig, p *plumbing, d *keeper.Daemon) *api.Server {
 				"auto_reconnect": d.AutoReconnectOn(),
 				"multi_channel":  d.MultiChannelOn()},
 		}
+		if p.portal != nil {
+			info := p.portal.BindingInfo()
+			snap.BindMode = info.Mode
+			snap.BindInterface = info.Interface
+			snap.BindIndex = info.Index
+			snap.BindDegraded = info.Degraded
+			if info.Err != nil {
+				snap.BindError = info.Err.Error()
+			}
+		}
 		// 原因覆盖状态名：本地节流不再冒充「登录被拒」，绑定失效不再只说「离线」。
 		// fake_online 的覆盖即「会话在线｜出口被控」主状态词（2026-11-22 修复项 2）。
 		if lbl, ok := api.ReasonLabel(h.Reason); ok {

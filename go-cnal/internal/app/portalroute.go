@@ -2,6 +2,7 @@ package app
 
 import (
 	"errors"
+	"fmt"
 	"net"
 	"time"
 
@@ -131,10 +132,27 @@ func (p *plumbing) routeText() string {
 		return ""
 	}
 	label := routeLabels[p.lastRoute]
-	if p.lastWhy == "" {
-		return label
+	text := label
+	if p.lastWhy != "" {
+		text += "（" + p.lastWhy + "）"
 	}
-	return label + "（" + p.lastWhy + "）"
+	if p.lastRoute == routeBound && p.portal != nil {
+		info := p.portal.BindingInfo()
+		switch info.Mode {
+		case "interface":
+			text += fmt.Sprintf("｜接口绑定 %s(#%d)", info.Interface, info.Index)
+		case "source_only":
+			if info.Degraded {
+				text += "｜降级：仅绑源 IP"
+			} else {
+				text += "｜仅绑源 IP"
+			}
+		}
+		if info.Err != nil {
+			text += "｜接口绑定失败：" + info.Err.Error()
+		}
+	}
+	return text
 }
 
 // routeErrText 解析失败原因文本（err 为 nil 时给兜底，日志不留空白）。

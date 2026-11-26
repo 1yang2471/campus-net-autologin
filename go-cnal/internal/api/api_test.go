@@ -235,6 +235,30 @@ func TestQueryTokenOnlyForPanel(t *testing.T) {
 	}
 }
 
+// 行为：接口绑定诊断字段透传且空错误省略，旧客户端零影响。
+func TestSnapshotBindingFieldsPassThrough(t *testing.T) {
+	s := New()
+	s.Login = func() error { return nil }
+	s.Snapshot = func() Snapshot {
+		return Snapshot{
+			State:         "online",
+			BindMode:      "interface",
+			BindInterface: "WLAN 2",
+			BindIndex:     9,
+			BindDegraded:  false,
+			BindError:     "",
+		}
+	}
+	ts := httptest.NewServer(s.Handler())
+	_, m := getJSON(t, ts.URL+"/state", s.Token)
+	if m["bind_mode"] != "interface" || m["bind_interface"] != "WLAN 2" || m["bind_index"] != float64(9) {
+		t.Fatalf("绑定诊断字段应透传，实际 %v", m)
+	}
+	if _, ok := m["bind_error"]; ok {
+		t.Fatal("空绑定错误应被 omitempty 省略")
+	}
+}
+
 // 行为：门户路径读数原样透传到 JSON（面板「门户路径」行；2026-11-11 设计 §4）。
 func TestSnapshotRoutePassThrough(t *testing.T) {
 	s := New()

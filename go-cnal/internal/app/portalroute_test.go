@@ -156,6 +156,20 @@ func TestRouteTextExposesPathAndReason(t *testing.T) {
 	}
 }
 
+func TestRouteTextIncludesBindingMode(t *testing.T) {
+	p, _, _ := routeFixture(NetModeAuto, func() (net.IP, error) {
+		return net.IPv4(10, 129, 0, 9), nil
+	})
+	if !p.portal.Bindable(nil) {
+		t.Fatal("测试源应可绑定")
+	}
+	p.routePortal()
+	got := p.routeText()
+	if !strings.Contains(got, "接口绑定") && !strings.Contains(got, "仅绑源") {
+		t.Fatalf("路径文本应暴露绑定模式，实际 %q", got)
+	}
+}
+
 // 行为：路径标签不得声称「跟 TUN」——TUN 是否接管要靠适配器描述才说得准，
 // 2026-11-11 实测那台机器上 TUN 根本没开，凭空写就是把猜测当事实说。
 func TestRouteLabelDoesNotClaimTUN(t *testing.T) {
