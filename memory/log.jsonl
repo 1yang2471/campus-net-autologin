@@ -1,0 +1,2 @@
+{"kind":"rejection","key":"windows-interface-bind-failure","what":"Windows 接口绑定默认严格失败即拒绝发凭据并保留显式降级开关","why":"避免 auto 回退系统栈把登录 socket 送入 TUN","at":1}
+{"kind":"rejection","key":"clash-fakeip-api","what":"实现仅本机回环的 Clash fake-ip flush API 且失败不阻断认证","why":"补齐已承诺的代理共存恢复能力","at":2}
