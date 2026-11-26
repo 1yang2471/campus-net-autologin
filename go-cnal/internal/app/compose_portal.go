@@ -32,6 +32,10 @@ type plumbing struct {
 	currentV6    func() net.IP
 	// netMode 门户选路模式（auto/bound/system，见 config.go）；运行期只读。
 	netMode string
+	// bindMode 物理 socket 绑定模式；strictInterfaceBind 控制 auto 是否允许
+	// 在接口/绑源失败时回退系统栈。Windows 生产默认严格。
+	bindMode            netstack.BindMode
+	strictInterfaceBind bool
 	// logf 路径日志缝（默认 stdout，安卓注入状态日志）：只在路径变化时调用。
 	logf func(format string, args ...any)
 	// routeMu/lastRoute/lastWhy 路径日志去重（Tick 与回路 API goroutine 并发选路）。
@@ -66,7 +70,7 @@ type plumbing struct {
 
 // portalProbe 探测「从某物理源能不能到达门户」。默认走真探测（netstack 包）；
 // 单元测试同包替换它——测试不该依赖网络。
-var portalProbe = netstack.ProbePortal
+var portalProbeWithBindMode = netstack.ProbePortalWithBindMode
 
 // newPlumbing 装配「物理源 → 门户钉 IP → 各用途客户端 → 登录动作」。
 // 返回错误即启动失败（bind_ip 非法 / 无物理源 / server 非法 URL）。
@@ -95,6 +99,7 @@ func newPlumbing(cfg daemonConfig, user, pass string) (*plumbing, error) {
 	// 网关**只在校园网段可达**——插了网线后默认路由 metric 偏向以太网，恰好
 	// 选到够不着网关的那条（真机实测：1.1.1.2:443 从 WLAN 源 0.03s 通，
 	// 从以太网源超时）。
+	bindMode := netstack.ModeForStrict(cfg.StrictInterfaceBind)
 	var (
 		picker *netstack.SourcePicker
 		v4     net.IP
@@ -116,8 +121,8 @@ func newPlumbing(cfg daemonConfig, user, pass string) (*plumbing, error) {
 		picker = netstack.NewSourcePicker(
 			func() []net.IP { return netstack.CandidateSources(cfg.CampusDNS) },
 			func(src net.IP) error {
-				return portalProbe(src, cfg.CampusDNS, portalHost, portalPort,
-					maxDuration(cfg.ProbeTimeout, 3*time.Second), cfg.SSLVerify)
+				return portalProbeWithBindMode(src, cfg.CampusDNS, portalHost, portalPort,
+					maxDuration(cfg.ProbeTimeout, 3*time.Second), cfg.SSLVerify, bindMode)
 			})
 		picked, perr := picker.Refresh()
 		if picked == nil {
@@ -133,6 +138,7 @@ func newPlumbing(cfg daemonConfig, user, pass string) (*plumbing, error) {
 	if v4 == nil {
 		return nil, errors.New("无可用物理 v4 源（TUN 占满？）——物理栈纪律下不触网")
 	}
+	strictBind := cfg.StrictInterfaceBind && netstack.DefaultBindMode() == netstack.BindModeInterface
 	printSource("v6 源: %s\n", srcStr(v6))
 
 	// 当前 v4/v6 物理源（共享引用）：重发现改绑 / v6 临时地址轮换后，所有
@@ -164,10 +170,10 @@ func newPlumbing(cfg daemonConfig, user, pass string) (*plumbing, error) {
 	// （2026-11-08 真机实证 a.stu.edu.cn → 28.0.0.17），直接用域名会让所有
 	// 绑源请求超时。用校园 DNS 绑源解析 + 钉 IP 直连，TTL 缓存免每拍打 DNS。
 	pt := newPortalTarget(func() (net.IP, error) {
-		return netstack.ResolveBound(currentV4(), cfg.CampusDNS, portalHost, cfg.ProbeTimeout)
+		return netstack.ResolveBoundWithBindMode(currentV4(), cfg.CampusDNS, portalHost, cfg.ProbeTimeout, bindMode)
 	}, 60*time.Second)
 
-	portal := netstack.New(v4, maxDuration(2*cfg.ProbeTimeout, 6*time.Second))
+	portal := netstack.NewWithBindMode(v4, maxDuration(2*cfg.ProbeTimeout, 6*time.Second), bindMode)
 	if !cfg.SSLVerify {
 		portal = portal.InsecureTLS()
 	}
@@ -177,7 +183,7 @@ func newPlumbing(cfg daemonConfig, user, pass string) (*plumbing, error) {
 	if !cfg.SSLVerify {
 		systemPortal = systemPortal.InsecureTLS()
 	}
-	probe := netstack.New(v4, cfg.ProbeTimeout)
+	probe := netstack.NewWithBindMode(v4, cfg.ProbeTimeout, bindMode)
 	systemProbe := netstack.NewSystem(cfg.ProbeTimeout)
 	// handshakeOnce 对端握手的唯一构造点（登录取值 + v6 四态观察共用，防两份
 	// 漂移）。每次现场构造端点：v6 临时地址轮换后缓存会绑到失效地址；
@@ -196,7 +202,7 @@ func newPlumbing(cfg daemonConfig, user, pass string) (*plumbing, error) {
 	}
 	// loginClient 登录专用客户端：超时独立于探测（RADIUS 后端 3-6s，复用
 	// probe_timeout 会「向导测过、守护老超时」——Python P1-7 同源）。
-	loginClient := netstack.New(v4, cfg.LoginTimeout)
+	loginClient := netstack.NewWithBindMode(v4, cfg.LoginTimeout, bindMode)
 	if !cfg.SSLVerify {
 		loginClient = loginClient.InsecureTLS()
 	}
@@ -211,7 +217,7 @@ func newPlumbing(cfg daemonConfig, user, pass string) (*plumbing, error) {
 		portal: portal, systemPortal: systemPortal,
 		probe: probe, systemProbe: systemProbe,
 		login: loginClient, systemLogin: systemLogin,
-		netMode: cfg.NetMode, logf: printSource,
+		netMode: cfg.NetMode, bindMode: bindMode, strictInterfaceBind: strictBind, logf: printSource,
 		currentV4: currentV4, setV4: setV4, currentV6: currentV6, handshakeOnce: handshakeOnce,
 		// 绑源自检：DNS 缓存命中但网卡 IP 被摘掉时（2026-11-23 过夜缺陷），
 		// chooseRoute 据此判绑源是否仍可用，失效则清缓存+转系统栈。
@@ -234,7 +240,7 @@ func newPlumbing(cfg daemonConfig, user, pass string) (*plumbing, error) {
 	// 重发现 = 按门户可达性重新探测（不是盲选路由表）——拓扑变了才知道
 	// 哪条链路还够得着认证网关。
 	// tlsProbe 提前声明：重发现必须同步改绑它（否则 L2 探测永远走旧源）。
-	tlsProbe := netstack.New(currentV4(), cfg.ProbeTimeout)
+	tlsProbe := netstack.NewWithBindMode(currentV4(), cfg.ProbeTimeout, bindMode)
 	p.tlsProbe = tlsProbe
 	if picker != nil {
 		p.picker = picker

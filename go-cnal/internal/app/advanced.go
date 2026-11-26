@@ -78,6 +78,7 @@ func defaultAdvancedConfig() daemonConfig {
 		Response:         keeper.DefaultResponseMarks(),
 		LoginForm:        protocol.DefaultForm(),
 	}
+	c.StrictInterfaceBind = true
 	return c
 }
 

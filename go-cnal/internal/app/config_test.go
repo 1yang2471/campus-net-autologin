@@ -57,6 +57,21 @@ func TestConfigNetMode(t *testing.T) {
 		t.Error("非法 net_mode 必须报错（不得静默回退 auto）")
 	}
 }
+func TestConfigStrictInterfaceBindDefaultAndOverride(t *testing.T) {
+	base := "[keeper]\nserver = https://x\nlogin_path = /a\n"
+	c, err := loadDaemonConfig(writeTmpIni(t, base))
+	if err != nil || !c.StrictInterfaceBind {
+		t.Fatalf("strict_interface_bind 缺省必须为 true，实际 %v %v", c.StrictInterfaceBind, err)
+	}
+	c, err = loadDaemonConfig(writeTmpIni(t, base+"strict_interface_bind = false\n"))
+	if err != nil || c.StrictInterfaceBind {
+		t.Fatalf("显式 false 应允许降级，实际 %v %v", c.StrictInterfaceBind, err)
+	}
+	if _, err := loadDaemonConfig(writeTmpIni(t, base+"strict_interface_bind = maybe\n")); err == nil {
+		t.Fatal("非法布尔值必须报错")
+	}
+}
+
 func TestConfigAutoReconnectOffAndBindIP(t *testing.T) {
 	c, err := loadDaemonConfig(writeTmpIni(t, "[keeper]\nserver = https://x\nlogin_path = /a\nauto_reconnect = false\nbind_ip = 172.29.1.5\n"))
 	if err != nil {

@@ -118,6 +118,21 @@ func TestDeliverPinnedUsesBoundPinWhenResolveSucceeds(t *testing.T) {
 	}
 }
 
+func TestDeliverPinnedStrictAutoFailsClosedWithoutRequest(t *testing.T) {
+	var hits int32
+	p, srv := routeWiringFixture(t, NetModeAuto, func(w http.ResponseWriter, _ *http.Request) {
+		atomic.AddInt32(&hits, 1)
+	})
+	p.strictInterfaceBind = true
+	cfg := daemonConfig{Server: srv.URL, LoginPath: "/login", LoginPage: "/"}
+	if _, err := deliverPinned(cfg, p, map[string]string{"userName": "s1", "pwd": "x"}); err == nil {
+		t.Fatal("严格 auto 解析失败必须拒绝")
+	}
+	if n := atomic.LoadInt32(&hits); n != 0 {
+		t.Fatalf("严格 auto 不得发出凭据请求，实际 %d 次", n)
+	}
+}
+
 // 行为：flux 查询同一条选路（会话判死依赖它，走错路会误判死）。
 func TestFluxQueryFallsBackToSystem(t *testing.T) {
 	p, srv := routeWiringFixture(t, NetModeAuto, func(w http.ResponseWriter, r *http.Request) {

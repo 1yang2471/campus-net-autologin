@@ -25,6 +25,7 @@ func routeFixture(mode string, resolve func() (net.IP, error)) (*plumbing, *nets
 		pt:           newPortalTarget(resolve, 60*time.Second),
 		portalPort:   "443",
 		netMode:      mode,
+		bindMode:     netstack.BindModeSourceOnly,
 		portal:       bound,
 		systemPortal: system,
 		login:        bound,

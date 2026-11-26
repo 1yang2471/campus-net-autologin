@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"cnal/internal/netstack"
 )
 
 // 2026-11-23 过夜轮缺陷（A2/A3 实测）：MIUI Doze 期 wlan0 的 IP 从内核网卡
@@ -134,13 +136,27 @@ func TestRouteUnbindableWhySaysSourceNotDNS(t *testing.T) {
 	}
 }
 
+func TestRouteAutoStrictRefusesSystemFallback(t *testing.T) {
+	p, _, _ := routeFixture(NetModeAuto, func() (net.IP, error) {
+		return nil, errors.New("DNS 不通")
+	})
+	p.strictInterfaceBind = true
+	r := p.routeLogin()
+	if r.client != nil || r.path != routeBound {
+		t.Fatalf("严格 auto 必须 fail-closed，实际 client=%v path=%s why=%s", r.client, r.path, r.why)
+	}
+	if !strings.Contains(r.why, "严格接口绑定") {
+		t.Fatalf("原因应明确严格接口绑定，实际 %q", r.why)
+	}
+}
+
 // 行为：生产装配必须把真实 Bindable 接到缝上（守接线——上面 7 个测试全用
 // 替身，删掉 newPlumbing 里的 bindable 赋值它们照样绿）。用文档保留地址
 // 203.0.113.x 验证「真实自检判失效」，确认缝指向真实现而非空壳。
 func TestPlumbingWiresRealBindable(t *testing.T) {
-	old := portalProbe
-	t.Cleanup(func() { portalProbe = old })
-	portalProbe = func(net.IP, string, string, string, time.Duration, bool) error { return nil }
+	old := portalProbeWithBindMode
+	t.Cleanup(func() { portalProbeWithBindMode = old })
+	portalProbeWithBindMode = func(net.IP, string, string, string, time.Duration, bool, netstack.BindMode) error { return nil }
 	cfg := defaultAdvancedConfig()
 	cfg.Server = "https://portal.example"
 	cfg.BindIP = "203.0.113.99" // 固定源（不可达，但自检只判本机绑定能力）

@@ -60,7 +60,7 @@ func (p *plumbing) channelProbe(v keeper.ChannelView, cfg daemonConfig) string {
 // DNS 先走绑源校园 DNS；未认证 VLAN 上它常不回应（11-19 实测），或应答里
 // 先给 v6——都回退系统解析的 ip4（观察无凭据；fake-ip 会被 ResolveSystem 过滤）。
 func (p *plumbing) channelAuthState(src net.IP, cfg daemonConfig) string {
-	ip, err := netstack.ResolveBound(src, cfg.CampusDNS, channelProbeHost, cfg.ProbeTimeout)
+	ip, err := netstack.ResolveBoundWithBindMode(src, cfg.CampusDNS, channelProbeHost, cfg.ProbeTimeout, p.bindMode)
 	if err != nil || ip.To4() == nil {
 		ip, err = netstack.ResolveSystem(channelProbeHost)
 		if err != nil || ip.To4() == nil {
@@ -71,7 +71,7 @@ func (p *plumbing) channelAuthState(src net.IP, cfg daemonConfig) string {
 	if ip4 == nil {
 		return keeper.ChannelOffline
 	}
-	c := netstack.New(src, cfg.ProbeTimeout)
+	c := netstack.NewWithBindMode(src, cfg.ProbeTimeout, p.bindMode)
 	pin := net.JoinHostPort(ip4.String(), "80")
 	st, hdr, body, err := c.GetStatusPinnedHeaders("http://"+channelProbeHost+"/", nil, pin)
 	if err != nil {

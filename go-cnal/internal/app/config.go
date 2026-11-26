@@ -65,6 +65,10 @@ type daemonConfig struct {
 	FluxPollInterval time.Duration
 	FluxWarnAt       float64
 	FluxCriticalAt   float64
+
+	// StrictInterfaceBind Windows 默认严格：接口绑定失败时不转系统栈、
+	// 不发凭据；显式 false 时允许降级为仅绑源 IP。非 Windows 不生效。
+	StrictInterfaceBind bool
 }
 
 // loadDaemonConfig 读守护 ini：[keeper]/[portal] 扁平扫描 key = value，
@@ -80,6 +84,8 @@ func loadDaemonConfig(path string) (daemonConfig, error) {
 	var c daemonConfig
 	c.SSLVerify = true     // 安全默认：缺省校验证书，显式 ssl_verify=false 才放开
 	c.AutoReconnect = true // Python DEFAULTS auto_reconnect=true：缺省开
+
+	c.StrictInterfaceBind = true
 	// 退避与词表默认值对齐 Python DEFAULTS/RESPONSE_DEFAULTS：参考校零改动，
 	// 异校只覆盖自己踩到的键。
 	c.RejectBackoff = 600 * time.Second
@@ -209,6 +215,12 @@ func loadDaemonConfig(path string) (daemonConfig, error) {
 			default:
 				return c, fmt.Errorf("net_mode %q 非法（只能是 auto/bound/system）", v)
 			}
+		case "strict_interface_bind":
+			b, err := parseConfigBool(k, v)
+			if err != nil {
+				return daemonConfig{}, err
+			}
+			c.StrictInterfaceBind = b
 		case "user_agent":
 			c.UserAgent = v
 		case "login_timeout":
@@ -322,6 +334,17 @@ var (
 	ErrMissingServer    = errors.New("缺少 server")
 	ErrMissingLoginPath = errors.New("缺少 login_path")
 )
+
+func parseConfigBool(key, v string) (bool, error) {
+	switch strings.ToLower(strings.TrimSpace(v)) {
+	case "true", "1", "on":
+		return true, nil
+	case "false", "0", "off":
+		return false, nil
+	default:
+		return false, fmt.Errorf("%s 只能是 true/false，实际 %q", key, v)
+	}
+}
 
 // clampSeconds 解析秒数并钳制到 Python _num 同款范围；非整数报错可见
 // （静默回落会让用户以为配置生效了）。

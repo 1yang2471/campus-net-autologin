@@ -57,6 +57,9 @@ func (p *plumbing) chooseRoute(bound, system *netstack.Client) portalRoute {
 		})
 	}
 	ip, err := p.pt.lookup()
+	if errors.Is(err, netstack.ErrInterfaceBind) {
+		err = errSourceUnbindable
+	}
 	if ip != nil {
 		// 2026-11-23 过夜缺陷：DNS 结果在 TTL 缓存里命中，但 wlan0 的 IP 已被
 		// Doze 从内核网卡摘掉——dialer 的 LocalAddr 绑不上，5 小时 13 拍全卡在
@@ -82,10 +85,10 @@ func (p *plumbing) chooseRoute(bound, system *netstack.Client) portalRoute {
 	if err == errSourceUnbindable {
 		failKind = "绑源不可用"
 	}
-	if mode == NetModeBound {
+	if mode == NetModeBound || (mode == NetModeAuto && p.strictInterfaceBind) {
 		return p.noteRoute(portalRoute{
 			path: routeBound,
-			why:  failKind + "（" + routeErrText(err) + "），net_mode=bound 拒绝转系统栈",
+			why:  failKind + "（" + routeErrText(err) + "），严格接口绑定拒绝转系统栈",
 		})
 	}
 	// 转系统栈 = 绑源不可用（解析失败或源失效）。触发物理源重发现（2026-11-22

@@ -38,7 +38,7 @@ func channelDeliver(p *plumbing, cfg daemonConfig, channelSrc, portalIP net.IP, 
 		if portalIP == nil || portalIP.To4() == nil {
 			return "", errors.New("门户 IP 未知：不投递凭据")
 		}
-		client := netstack.New(channelSrc, cfg.LoginTimeout)
+		client := netstack.NewWithBindMode(channelSrc, cfg.LoginTimeout, p.bindMode)
 		if !cfg.SSLVerify {
 			client = client.InsecureTLS()
 		}
@@ -69,7 +69,7 @@ func (p *plumbing) channelLogin(cfg daemonConfig, ch ChannelRef) (string, error)
 	}
 	// 门户真实 IP：绑**该通道的源**解析（不能用主链路的解析结果——那是
 	// 另一条链路上的 IP，拨过去认证的不是这条通道）。
-	ip, err := netstack.ResolveBound(src, cfg.CampusDNS, p.portalHost, cfg.ProbeTimeout)
+	ip, err := netstack.ResolveBoundWithBindMode(src, cfg.CampusDNS, p.portalHost, cfg.ProbeTimeout, p.bindMode)
 	if err != nil || ip.To4() == nil {
 		return "", fmt.Errorf("绑源解析门户失败: %w", err)
 	}
