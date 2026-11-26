@@ -16,17 +16,31 @@ import (
 // 缓存 TTL：门户 IP 不常变，每拍探测都打 DNS 既慢又吵；休眠唤醒/换网后
 // TTL 到期自然重解析（与物理源重发现互补，不引入第二套失效逻辑）。
 type portalTarget struct {
-	mu      sync.Mutex
-	resolve func() (net.IP, error)
-	ttl     time.Duration
-	ip      net.IP
-	at      time.Time
-	now     func() time.Time
+	mu         sync.Mutex
+	resolve    func() (net.IP, error)
+	resolveFor func(net.IP) (net.IP, error)
+	ttl        time.Duration
+	ip         net.IP
+	src        net.IP
+	at         time.Time
+	now        func() time.Time
 }
 
 // newPortalTarget 构造；resolve 是生产解析缝（绑源校园 DNS），测试可注入替身。
 func newPortalTarget(resolve func() (net.IP, error), ttl time.Duration) *portalTarget {
-	return &portalTarget{resolve: resolve, ttl: ttl, now: time.Now}
+	return &portalTarget{
+		resolve: resolve,
+		resolveFor: func(net.IP) (net.IP, error) {
+			return resolve()
+		},
+		ttl: ttl,
+		now: time.Now,
+	}
+}
+
+// newPortalTargetForSource 按源 IP 缓存门户地址，换网后旧源结果不得复用。
+func newPortalTargetForSource(resolve func(net.IP) (net.IP, error), ttl time.Duration) *portalTarget {
+	return &portalTarget{resolveFor: resolve, ttl: ttl, now: time.Now}
 }
 
 // invalidate 强制下一次 get 重新解析（物理源重发现/换网后调用）。
@@ -34,6 +48,7 @@ func (p *portalTarget) invalidate() {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.ip = nil
+	p.src = nil
 	p.at = time.Time{}
 }
 
@@ -41,18 +56,33 @@ func (p *portalTarget) invalidate() {
 // 非 nil error：调用方据 net_mode 决定转系统栈还是拒绝——原因要能进路径日志，
 // 否则用户只看到「门户解析失败」，查不动为什么。
 func (p *portalTarget) lookup() (net.IP, error) {
+	return p.lookupForSource(nil)
+}
+
+// lookupForSource 只复用与当前源相同的 DNS pin；src 为 nil 时保留旧测试语义。
+func (p *portalTarget) lookupForSource(src net.IP) (net.IP, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	if p.ip != nil && p.now().Sub(p.at) < p.ttl {
+	if p.ip != nil && (src == nil || p.src.Equal(src)) && p.now().Sub(p.at) < p.ttl {
 		return p.ip, nil
 	}
-	ip, err := p.resolve()
+	var (
+		ip  net.IP
+		err error
+	)
+	if p.resolveFor != nil {
+		ip, err = p.resolveFor(src)
+	} else {
+		ip, err = p.resolve()
+	}
 	if err != nil {
 		return nil, err
 	}
 	if ip == nil {
 		return nil, errors.New("DNS 解析结果为空")
 	}
-	p.ip, p.at = ip, p.now()
+	p.ip = ip
+	p.src = append(net.IP(nil), src...)
+	p.at = p.now()
 	return p.ip, nil
 }

@@ -26,7 +26,7 @@ func WriteStarterConfig(path, server string) error {
 		"server = " + server + "\n" +
 		"login_path = " + protocol.DefaultLoginPath + "\n" +
 		"login_page = " + protocol.DefaultLoginPage + "\n" +
-		"; campus_dns = 10.x.x.x   ; 已知校园 DNS 时填上（物理源选路/门户钉 IP）\n" +
+		"; campus_dns 留空时 Windows 从物理网卡自动获取；也可填已知校园 DNS IP\n" +
 		"; probe_ips / probe_path / probe_host / user_agent / ssl_verify 等可选项见 README\n"
 	return os.WriteFile(path, []byte(body), 0o600)
 }

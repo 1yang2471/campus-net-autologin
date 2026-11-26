@@ -228,7 +228,7 @@ func New(rawURL, secret string) (*Client, error) {
 		return nil, nil
 	}
 	u, err := url.Parse(rawURL)
-	if err != nil || u.Scheme != "http" || u.User != nil || u.RawQuery != "" || u.Fragment != "" || u.Host == "" {
+	if err != nil || u.Scheme != "http" || u.User != nil || u.RawQuery != "" || u.Fragment != "" || u.Host == "" || (u.Path != "" && u.Path != "/") {
 		return nil, errors.New("clash_api_url 仅允许无凭据、无查询串的本机回环 HTTP 地址")
 	}
 	host := strings.ToLower(u.Hostname())
@@ -254,7 +254,13 @@ func New(rawURL, secret string) (*Client, error) {
 	return &Client{
 		baseURL: strings.TrimRight(u.String(), "/"),
 		secret:  secret,
-		http:    &http.Client{Transport: tr, Timeout: 2 * time.Second},
+		http: &http.Client{
+			Transport: tr,
+			Timeout:   2 * time.Second,
+			CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
+				return http.ErrUseLastResponse
+			},
+		},
 	}, nil
 }
 

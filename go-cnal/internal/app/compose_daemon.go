@@ -92,7 +92,7 @@ func newDaemon(cfg daemonConfig, p *plumbing) *keeper.Daemon {
 	// 拉黑（双路都死，restricted）区分；4.5h 假警报不再发生。
 	d.ProbeL2 = func() string {
 		const l2Host = "www.baidu.com"
-		bound, berr := netstack.ResolveBound(p.currentV4(), cfg.CampusDNS, l2Host, cfg.ProbeTimeout)
+		bound, berr := netstack.ResolveBoundWithBindMode(p.currentV4(), cfg.CampusDNS, l2Host, cfg.ProbeTimeout, p.bindMode)
 		// 目标是 v4 绑源客户端，必须是 v4 地址：绑源解析可能先回 v6（校园 DNS
 		// 对百度的 A/AAAA 双记录，2026-11-20 实测先给 240e:...），v4 源拨 v6
 		// 报 "no suitable address found" → 恒判「出口受限」假警告。

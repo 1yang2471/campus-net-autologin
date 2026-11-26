@@ -2,9 +2,10 @@
 
 ## 变更
 
-- Windows 物理栈从“仅绑源 IP”升级为“源 IP + 接口索引”：HTTP、DNS、门户 TLS、Bindable、IPv6 Peer 与多通道登录都在 socket connect/bind 前设置 `IP_UNICAST_IF` / `IPV6_UNICAST_IF`。
+- Windows 物理栈从“仅绑源 IP”升级为“源 IP + 接口索引”：HTTP、DNS、门户 TLS、Bindable、IPv6 Peer 与多通道登录都在 socket connect/bind 前设置 `IP_UNICAST_IF` / `IPV6_UNICAST_IF`；一次操作使用源与 DNS pin 的不可变快照。
+- `campus_dns` 留空时从物理网卡自动读取同族 DNS；严格模式取不到就明确失败，不偷回系统 DNS。
 - 新增 `strict_interface_bind`，Windows 默认 `true`：接口绑定失败即拒绝，不转系统栈、不发凭据；显式 `false` 才降级为仅绑源 IP。
-- 新增仅本机回环的 Clash/Mihomo fake-ip 联动：登录或补绑成功后 `POST /cache/fakeip/flush`，2 秒超时，失败不阻断认证。
+- 新增仅本机回环的 Clash/Mihomo fake-ip 联动：登录或补绑成功后 `POST /cache/fakeip/flush`，2 秒超时，失败不阻断认证；拒绝子路径与重定向，异步合并触发，非法配置只告警并禁用联动。
 - `/state`、面板门户路径与 `cnal status` 显示接口绑定、接口名、索引和降级状态。
 - 同步修正 README 中 Android 与 IPv6 的过时描述。
 
@@ -27,7 +28,7 @@ clash_api_secret =
 
 - `go vet ./...` 通过。
 - `go test ./... -count=1` 全包通过。
-- Windows socket option 回读、严格零凭据回退、Clash API 安全校验通过。
+- Windows socket option 回读、严格零凭据回退、Clash API 安全校验通过；关键变异 5/5 被测试捕获。
 - Linux 共享内核编译通过；Android AAR 跨平台构建通过。
 - Windows 真机 TUN A/B：TUN 开启且默认路由被接管时，守护仍绑定物理 WLAN；FlClash 实时连接列表未出现 `cnalw.exe`。
 

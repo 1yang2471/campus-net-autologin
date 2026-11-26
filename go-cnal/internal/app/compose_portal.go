@@ -34,11 +34,16 @@ type plumbing struct {
 	currentV6    func() net.IP
 	// netMode 门户选路模式（auto/bound/system，见 config.go）；运行期只读。
 	netMode string
-	// bindMode 物理 socket 绑定模式；strictInterfaceBind 控制 auto 是否允许
-	// 在接口/绑源失败时回退系统栈。Windows 生产默认严格。
+	// bindMode 物理 socket 绑定模式（interface/source_only）；
+	// strictInterfaceBind 控制 net_mode=auto 是否允许绑源失败时回退系统栈。
 	bindMode            netstack.BindMode
 	strictInterfaceBind bool
 	clash               *clashapi.Client
+	clashMu             sync.Mutex
+	clashFlushing       bool
+	clashPending        bool
+	bindMu              sync.Mutex
+	lastBind            netstack.BindingInfo
 	// logf 路径日志缝（默认 stdout，安卓注入状态日志）：只在路径变化时调用。
 	logf func(format string, args ...any)
 	// routeMu/lastRoute/lastWhy 路径日志去重（Tick 与回路 API goroutine 并发选路）。
@@ -85,7 +90,10 @@ func newPlumbing(cfg daemonConfig, user, pass string) (*plumbing, error) {
 	}
 	clash, err := clashapi.New(cfg.ClashAPIURL, cfg.ClashAPISecret)
 	if err != nil {
-		return nil, fmt.Errorf("Clash API 配置错误: %w", err)
+		msg := fmt.Sprintf("Clash API 配置错误，已禁用联动（不影响认证）: %v", err)
+		printSource("%s\n", msg)
+		_ = AppendEvent(LogFilePath(), EventClock(), msg)
+		clash = nil
 	}
 	portalHost := u.Hostname()
 	portalPort := u.Port()
@@ -107,6 +115,9 @@ func newPlumbing(cfg daemonConfig, user, pass string) (*plumbing, error) {
 	// 选到够不着网关的那条（真机实测：1.1.1.2:443 从 WLAN 源 0.03s 通，
 	// 从以太网源超时）。
 	bindMode := netstack.ModeForStrict(cfg.StrictInterfaceBind)
+	if bindMode == netstack.BindModeSourceOnly && netstack.DefaultBindMode() == netstack.BindModeInterface {
+		printSource("物理栈降级: strict_interface_bind=false，仅绑源 IP（不保证绕开路由型 TUN）\n")
+	}
 	var (
 		picker *netstack.SourcePicker
 		v4     net.IP
@@ -176,8 +187,13 @@ func newPlumbing(cfg daemonConfig, user, pass string) (*plumbing, error) {
 	// 门户真实 IP（Python _portal_target 同源）：系统 DNS 在 TUN 下给 fake-ip
 	// （2026-11-08 真机实证 a.stu.edu.cn → 28.0.0.17），直接用域名会让所有
 	// 绑源请求超时。用校园 DNS 绑源解析 + 钉 IP 直连，TTL 缓存免每拍打 DNS。
-	pt := newPortalTarget(func() (net.IP, error) {
-		return netstack.ResolveBoundWithBindMode(currentV4(), cfg.CampusDNS, portalHost, cfg.ProbeTimeout, bindMode)
+	var bindSink func(netstack.BindingInfo)
+	pt := newPortalTargetForSource(func(src net.IP) (net.IP, error) {
+		ip, info, err := netstack.ResolveBoundWithInfo(src, cfg.CampusDNS, portalHost, cfg.ProbeTimeout, bindMode)
+		if bindSink != nil {
+			bindSink(info)
+		}
+		return ip, err
 	}, 60*time.Second)
 
 	portal := netstack.NewWithBindMode(v4, maxDuration(2*cfg.ProbeTimeout, 6*time.Second), bindMode)
@@ -203,8 +219,8 @@ func newPlumbing(cfg daemonConfig, user, pass string) (*plumbing, error) {
 		if cfg.V6Peer == "" || cfg.PeerOpr == "" {
 			return "", errors.New("未配置对端握手（v6_peer/peer_opr）")
 		}
-		peer := protocol.NewPeer(peerURL(cfg.V6Peer)+cfg.PeerPath,
-			maxDuration(cfg.ProbeTimeout, 5*time.Second))
+		peer := protocol.NewPeerWithBindMode(peerURL(cfg.V6Peer)+cfg.PeerPath,
+			maxDuration(cfg.ProbeTimeout, 5*time.Second), bindMode)
 		return peer.Query(src, cfg.PeerOpr)
 	}
 	// loginClient 登录专用客户端：超时独立于探测（RADIUS 后端 3-6s，复用
@@ -231,6 +247,7 @@ func newPlumbing(cfg daemonConfig, user, pass string) (*plumbing, error) {
 		bindable: portal.Bindable,
 		rl:       keeper.NewRateLimit(8, time.Hour, 15*time.Minute, time.Now),
 	}
+	bindSink = p.noteBind
 	p.action = &keeper.LoginAction{
 		User: user, Pass: pass, DualStack: cfg.DualStack,
 		Marks: cfg.Response, Form: cfg.LoginForm,
@@ -272,16 +289,53 @@ func newPlumbing(cfg daemonConfig, user, pass string) (*plumbing, error) {
 	return p, nil
 }
 
+func (p *plumbing) noteBind(info netstack.BindingInfo) {
+	if info.Mode == "" && info.Err == nil {
+		return
+	}
+	p.bindMu.Lock()
+	p.lastBind = info
+	p.bindMu.Unlock()
+}
+
+func (p *plumbing) bindingInfo() netstack.BindingInfo {
+	p.bindMu.Lock()
+	defer p.bindMu.Unlock()
+	return p.lastBind
+}
+
 func (p *plumbing) flushClash() {
 	if p.clash == nil {
 		return
 	}
-	if err := p.clash.FlushFakeIP(context.Background()); err != nil {
-		msg := fmt.Sprintf("Clash fake-ip flush 失败（不影响认证）: %v", err)
-		if p.logf != nil {
-			p.logf("%s\n", msg)
+	p.clashMu.Lock()
+	if p.clashFlushing {
+		p.clashPending = true
+		p.clashMu.Unlock()
+		return
+	}
+	p.clashFlushing = true
+	p.clashMu.Unlock()
+	go p.runClashFlush()
+}
+
+func (p *plumbing) runClashFlush() {
+	for {
+		if err := p.clash.FlushFakeIP(context.Background()); err != nil {
+			msg := fmt.Sprintf("Clash fake-ip flush 失败（不影响认证）: %v", err)
+			if p.logf != nil {
+				p.logf("%s\n", msg)
+			}
+			_ = AppendEvent(LogFilePath(), EventClock(), msg)
 		}
-		_ = AppendEvent(LogFilePath(), EventClock(), msg)
+		p.clashMu.Lock()
+		if !p.clashPending {
+			p.clashFlushing = false
+			p.clashMu.Unlock()
+			return
+		}
+		p.clashPending = false
+		p.clashMu.Unlock()
 	}
 }
 
@@ -391,8 +445,8 @@ func v6Source(fallback func() net.IP) net.IP {
 
 // peerClient 按栈 op 用的 v6 入口（与对端握手同一 URL、同一套校验与超时）。
 func (p *plumbing) peerClient(cfg daemonConfig) *protocol.Peer {
-	return protocol.NewPeer(peerURL(cfg.V6Peer)+cfg.PeerPath,
-		maxDuration(cfg.ProbeTimeout, 5*time.Second))
+	return protocol.NewPeerWithBindMode(peerURL(cfg.V6Peer)+cfg.PeerPath,
+		maxDuration(cfg.ProbeTimeout, 5*time.Second), p.bindMode)
 }
 
 // 会话与栈操作（online_check 问归属 / 按栈注销 / 切账号搬会话）住在

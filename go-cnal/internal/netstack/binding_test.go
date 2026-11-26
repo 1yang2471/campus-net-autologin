@@ -68,7 +68,20 @@ func TestResolveInterfaceAcceptsLoopbackAlias(t *testing.T) {
 	}
 }
 
-func TestBindModeStrictFailsClosedAndAutoDegrades(t *testing.T) {
+func TestModeForStrictSelectsInterfaceOrSourceOnly(t *testing.T) {
+	want := BindModeSourceOnly
+	if DefaultBindMode() == BindModeInterface {
+		want = BindModeInterface
+	}
+	if ModeForStrict(true) != want {
+		t.Fatalf("严格模式应选择 interface，实际 %v", ModeForStrict(true))
+	}
+	if ModeForStrict(false) != BindModeSourceOnly {
+		t.Fatalf("非严格模式必须直接 source_only，实际 %v", ModeForStrict(false))
+	}
+}
+
+func TestBindModeStrictFailsClosedAndSourceOnlyDegrades(t *testing.T) {
 	old := interfaceSnapshots
 	t.Cleanup(func() { interfaceSnapshots = old })
 	interfaceSnapshots = func() ([]interfaceSnapshot, error) { return nil, nil }
@@ -76,9 +89,10 @@ func TestBindModeStrictFailsClosedAndAutoDegrades(t *testing.T) {
 	if _, _, err := makeDialer(src, "tcp4", time.Second, BindModeInterface); !errors.Is(err, ErrInterfaceBind) {
 		t.Fatalf("interface 模式不得降级，实际 %v", err)
 	}
-	d, info, err := makeDialer(src, "tcp4", time.Second, BindModeAuto)
-	if err != nil || d == nil || !info.Degraded || info.Mode != "source_only" {
-		t.Fatalf("auto 模式应显式降级，实际 d=%v info=%+v err=%v", d, info, err)
+	d, info, err := makeDialer(src, "tcp4", time.Second, BindModeSourceOnly)
+	wantDegraded := interfaceBindingSupported()
+	if err != nil || d == nil || info.Degraded != wantDegraded || info.Mode != "source_only" {
+		t.Fatalf("source_only 模式应显式降级，实际 d=%v info=%+v err=%v", d, info, err)
 	}
 	if d.Control != nil {
 		t.Fatal("降级后不得保留接口 Control")

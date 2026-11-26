@@ -33,6 +33,16 @@ func TestResolveBoundStrictInterfaceFailureSendsNoDNS(t *testing.T) {
 	}
 }
 
+func TestResolveBoundWithInfoReportsInterfaceFailure(t *testing.T) {
+	old := interfaceSnapshots
+	t.Cleanup(func() { interfaceSnapshots = old })
+	interfaceSnapshots = func() ([]interfaceSnapshot, error) { return nil, nil }
+	_, info, err := ResolveBoundWithInfo(net.ParseIP("127.0.0.1"), "127.0.0.1:53", "portal.example.test", time.Second, BindModeInterface)
+	if !errors.Is(err, ErrInterfaceBind) || info.Err == nil {
+		t.Fatalf("DNS 接口失败应进入诊断，实际 info=%+v err=%v", info, err)
+	}
+}
+
 // 行为：门户地址**不能**靠「像公共 DNS 就拒」来判。2026-11-11 真机实测：汕头
 // 大学门户的公开 A 记录就是 1.1.1.2（TLS 证书 CN=*.stu.edu.cn，系统信任库校验
 // 通过），按 IP 名单拒绝会把真门户挡在门外——11-10 那条黑名单就是这么把守护

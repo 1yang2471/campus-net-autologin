@@ -10,6 +10,10 @@ import (
 
 func interfaceBindingSupported() bool { return false }
 
+func discoverDNSServer(net.IP) (string, error) {
+	return "", errors.New("当前平台不支持接口 DNS 发现")
+}
+
 func interfaceControl(int, net.IP) (func(string, string, syscall.RawConn) error, error) {
 	return nil, errors.New("当前平台不支持接口级绑定")
 }

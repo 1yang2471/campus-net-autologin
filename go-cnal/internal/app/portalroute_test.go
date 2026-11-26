@@ -40,14 +40,25 @@ func TestRouteAutoPrefersBoundWhenResolveSucceeds(t *testing.T) {
 		return net.IPv4(10, 129, 0, 9), nil
 	})
 	r := p.routePortal()
-	if r.client != bound {
-		t.Errorf("两条都健康时应走绑源客户端")
+	if r.client == nil || !r.client.Source().Equal(bound.Source()) {
+		t.Errorf("两条都健康时应走同源绑源快照")
 	}
 	if r.path != routeBound {
 		t.Errorf("路径应为 %s，实际 %s", routeBound, r.path)
 	}
 	if r.pin != "10.129.0.9:443" {
 		t.Errorf("应钉解析出的真实 IP:443，实际 %q", r.pin)
+	}
+}
+
+func TestRouteReturnsImmutableSourceSnapshot(t *testing.T) {
+	p, bound, _ := routeFixture(NetModeAuto, func() (net.IP, error) {
+		return net.ParseIP("198.51.100.1"), nil
+	})
+	r := p.routePortal()
+	bound.SetSource(net.ParseIP("192.0.2.10"))
+	if r.client == nil || !r.client.Source().Equal(net.ParseIP("127.0.0.1")) {
+		t.Fatalf("选路结果不得随共享客户端改绑，实际 %v", r.client)
 	}
 }
 

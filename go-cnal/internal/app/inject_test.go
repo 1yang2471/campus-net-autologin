@@ -215,7 +215,7 @@ func TestSourceStaleFiresOnceUntilRebind(t *testing.T) {
 		t.Fatal(err)
 	}
 	// 门户 IP 解析替身（否则 pt.lookup 无缓存会失败，走不到 bindable 分支）。
-	pl.pt.resolve = func() (net.IP, error) { return net.ParseIP("1.2.3.4"), nil }
+	pl.pt.resolveFor = func(net.IP) (net.IP, error) { return net.ParseIP("1.2.3.4"), nil }
 	pl.bindable = func(net.IP) bool { return false } // 源不可绑定
 
 	fired := 0
@@ -280,7 +280,7 @@ func TestSourceStaleConcurrentFiresOnce(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	pl.pt.resolve = func() (net.IP, error) { return net.ParseIP("1.2.3.4"), nil }
+	pl.pt.resolveFor = func(net.IP) (net.IP, error) { return net.ParseIP("1.2.3.4"), nil }
 	pl.bindable = func(net.IP) bool { return false }
 
 	var mu sync.Mutex

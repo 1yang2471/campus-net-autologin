@@ -108,7 +108,7 @@ server =                            # 认证服务器（留空：向导自动探
 username = 你的账号                   # 首次运行引导填入；密码存系统凭据管理器
 password = <keyring>                 # 占位——真实密码在 Windows 凭据管理器
 probe_ips = 223.5.5.5,119.29.29.29   # L1 公网探测锚点（IP 直连，绕 DNS）
-campus_dns =                         # 校园网 DNS（留空走系统 DNS；填对则物理栈解析更快更准）
+campus_dns =                         # 校园网 DNS IP（留空：Windows 从物理网卡自动获取）
 dual_stack = false                   # true = 登录自动握手对端并携带 ipv4or6（E4 一次认证绑两栈；v6 掉线自动回真）
 v6_peer =                            # 对端栈入口裸 v6 字面量（如 1::2）；空 = 双栈关闭
 peer_opr =                           # 对端握手操作名（校事实词表，异校必配；汕大实测 ipv4or6online）
@@ -164,7 +164,8 @@ keeper.lock 都在这，与源码/exe 共用同一份）。改完 config.ini 需
 ## 适用范围与异校适配
 
 **本工具默认不绑定任何学校**：`server` 留空由向导自动探测或手填，`campus_dns`
-留空走系统 DNS。默认端点/表单/响应词表按 ac_portal 门户（参考校实测）
+留空时 Windows 从所选物理网卡读取 DNS；无法取得时严格模式会明确报错，要求填写
+IP 字面量。默认端点/表单/响应词表按 ac_portal 门户（参考校实测）
 设定，异校差异全部通过 `config.ini` 调整，**无需改代码**。
 
 **边界先说清**（2026-11-04 公开抓包/开源脚本调研）：校园网门户是**多协议
@@ -204,8 +205,8 @@ cnal compat --detect <登录页样本>      # 文本或 --file page.html
    `flux_path` 只影响「查流量」，不影响重连本职。
 3. **表单差异**：`[form]` 段加/覆盖字段（仅限"多带一个普通字段"的形态；
    需要取页面令牌或先加密密码的流程级差异不在可配范围）。
-4. **校园 DNS**：`campus_dns` 填 `ipconfig /all` 里网卡的第一行 DNS；留空也能
-   用（系统 DNS 回退），填对则物理栈下解析更快更准。锚点 `probe_ips` 可按需换。
+4. **校园 DNS**：`campus_dns` 填 `ipconfig /all` 里网卡的第一行 DNS；Windows 留空
+   会从物理网卡自动获取，获取不到则严格模式拒绝猜测地址。锚点 `probe_ips` 可按需换。
 5. **响应判定**：抓一次登录响应文本（浏览器 F12 / 抓包），用离线自检验证：
    ```bash
    cnal compat "把登录响应文本粘在这里"

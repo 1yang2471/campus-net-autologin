@@ -77,7 +77,7 @@ func TestResolveInterfaceRejectsMissingAndDuplicate(t *testing.T) {
 	}
 }
 
-func TestAutoModeFallsBackButInterfaceModeDoesNot(t *testing.T) {
+func TestSourceOnlyDegradesButInterfaceModeDoesNot(t *testing.T) {
 	old := interfaceSnapshots
 	t.Cleanup(func() { interfaceSnapshots = old })
 	interfaceSnapshots = func() ([]interfaceSnapshot, error) { return nil, nil }
@@ -85,9 +85,9 @@ func TestAutoModeFallsBackButInterfaceModeDoesNot(t *testing.T) {
 	if _, _, err := makeDialer(src, "tcp4", 1e9, BindModeInterface); !errors.Is(err, ErrInterfaceBind) {
 		t.Fatalf("interface 模式不得降级，实际 %v", err)
 	}
-	d, info, err := makeDialer(src, "tcp4", 1e9, BindModeAuto)
-	if err != nil || d == nil || !info.Degraded || info.Mode != "source_only" {
-		t.Fatalf("auto 模式应显式降级，实际 d=%v info=%+v err=%v", d, info, err)
+	d, info, err := makeDialer(src, "tcp4", 1e9, BindModeSourceOnly)
+	if err != nil || d == nil || info.Mode != "source_only" {
+		t.Fatalf("source_only 模式应显式降级，实际 d=%v info=%+v err=%v", d, info, err)
 	}
 }
 ```
@@ -157,9 +157,8 @@ var ErrInterfaceBind = errors.New("接口绑定失败")
 type BindMode uint8
 
 const (
-	BindModeAuto BindMode = iota
+	BindModeSourceOnly BindMode = iota
 	BindModeInterface
-	BindModeSourceOnly
 )
 
 type BindingInfo struct {
@@ -209,13 +208,10 @@ func DefaultBindMode() BindMode {
 }
 
 func ModeForStrict(strict bool) BindMode {
-	if !interfaceBindingSupported() {
-		return BindModeSourceOnly
-	}
-	if strict {
+	if strict && interfaceBindingSupported() {
 		return BindModeInterface
 	}
-	return BindModeAuto
+	return BindModeSourceOnly
 }
 
 func resolveInterface(src net.IP) (interfaceSnapshot, error) {
@@ -255,28 +251,18 @@ func socketControl(src net.IP, mode BindMode) (func(string, string, syscall.RawC
 	if src == nil {
 		return nil, BindingInfo{}, errors.New("未绑定源地址：物理栈纪律不允许")
 	}
-	if mode == BindModeSourceOnly || (mode == BindModeAuto && !interfaceBindingSupported()) {
-		return nil, BindingInfo{Mode: "source_only"}, nil
+	if mode == BindModeSourceOnly {
+		return nil, BindingInfo{Mode: "source_only", Degraded: interfaceBindingSupported()}, nil
 	}
 	iface, err := resolveInterface(src)
 	info := BindingInfo{Interface: iface.Name, Index: iface.Index}
 	if err != nil {
 		info.Err = err
-		if mode == BindModeAuto {
-			info.Mode = "source_only"
-			info.Degraded = true
-			return nil, info, nil
-		}
 		return nil, info, err
 	}
 	control, err := interfaceControl(iface.Index, src)
 	if err != nil {
 		info.Err = err
-		if mode == BindModeAuto {
-			info.Mode = "source_only"
-			info.Degraded = true
-			return nil, info, nil
-		}
 		return nil, info, fmt.Errorf("%w: %s(#%d): %v", ErrInterfaceBind, iface.Name, iface.Index, err)
 	}
 	info.Mode = "interface"

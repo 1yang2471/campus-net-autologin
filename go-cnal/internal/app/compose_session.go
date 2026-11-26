@@ -18,12 +18,17 @@ import (
 // 同路。绑源解析门户失败即返回错误（未知），不转系统栈——系统栈只做用户
 // 路径读数，不参与认证判定（2026-11-18：「A 报状态、B 问会话」即事故形态）。
 func (p *plumbing) onlineV4Bound(cfg daemonConfig) (protocol.OnlineState, error) {
-	ip, err := p.pt.lookup()
+	var src net.IP
+	if p.login != nil {
+		src = p.login.Source()
+	}
+	ip, err := p.pt.lookupForSource(src)
 	if ip == nil {
 		return protocol.OnlineState{}, fmt.Errorf("绑源解析门户失败: %w", err)
 	}
 	pin := net.JoinHostPort(ip.String(), p.portalPort)
-	raw, err := p.login.PostPinned(cfg.Server+cfg.LoginPath,
+	client := p.login.CloneForSource(src)
+	raw, err := client.PostPinned(cfg.Server+cfg.LoginPath,
 		protocol.OpForm(protocol.OpOnlineCheck, ""),
 		map[string]string{
 			"Content-Type": "application/x-www-form-urlencoded",

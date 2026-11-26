@@ -14,9 +14,10 @@ import (
 // Peer 是"对端栈入口"：v4 页面问 v6 侧、v6 页面问 v4 侧（门户前端如此，E1）。
 // 它只承载无凭据握手——构造上就没有凭据参数，而不是"记得不传"。
 type Peer struct {
-	mu      sync.Mutex
-	fullURL string // 完整 URL（含 scheme 与端点路径），构造时统一，Query 不再拼接
-	timeout time.Duration
+	mu       sync.Mutex
+	fullURL  string // 完整 URL（含 scheme 与端点路径），构造时统一，Query 不再拼接
+	timeout  time.Duration
+	bindMode netstack.BindMode
 
 	validatedCount int
 	lastValidated  time.Time
@@ -26,7 +27,11 @@ const defaultPeerTimeout = 5 * time.Second
 
 // NewPeer 接受完整 URL，构造时不校验——每次 Query 前都会重新校验。
 func NewPeer(fullURL string, timeout time.Duration) *Peer {
-	return &Peer{fullURL: fullURL, timeout: timeout}
+	return NewPeerWithBindMode(fullURL, timeout, netstack.DefaultBindMode())
+}
+
+func NewPeerWithBindMode(fullURL string, timeout time.Duration, mode netstack.BindMode) *Peer {
+	return &Peer{fullURL: fullURL, timeout: timeout, bindMode: mode}
 }
 
 func (p *Peer) LastValidated() time.Time {
@@ -97,6 +102,6 @@ func (p *Peer) PostForm(src net.IP, form map[string]string) (string, error) {
 	p.lastValidated = time.Now()
 	p.mu.Unlock()
 
-	c := netstack.New(src, p.timeout)
+	c := netstack.NewWithBindMode(src, p.timeout, p.bindMode)
 	return c.Post(p.fullURL, form, nil)
 }

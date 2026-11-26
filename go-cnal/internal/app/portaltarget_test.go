@@ -12,6 +12,31 @@ import (
 // 超时——登录/补绑/flux 查询必须用校园 DNS 绑源解析出的真实 IP 钉住直连。
 // 解析失败返回 nil（调用方跳过该拍，绝不把凭据发往猜测地址）。
 
+func TestPortalTargetCacheKeysOnSource(t *testing.T) {
+	calls := 0
+	pt := newPortalTargetForSource(func(src net.IP) (net.IP, error) {
+		calls++
+		if src.Equal(net.ParseIP("192.0.2.1")) {
+			return net.ParseIP("198.51.100.1"), nil
+		}
+		return net.ParseIP("198.51.100.2"), nil
+	}, time.Minute)
+	src1 := net.ParseIP("192.0.2.1")
+	src2 := net.ParseIP("192.0.2.2")
+	a, err := pt.lookupForSource(src1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := pt.lookupForSource(src1)
+	if err != nil || !a.Equal(b) || calls != 1 {
+		t.Fatalf("同源应命中缓存，实际 %v %v calls=%d", a, b, calls)
+	}
+	c, err := pt.lookupForSource(src2)
+	if err != nil || c.Equal(a) || calls != 2 {
+		t.Fatalf("换源必须重新解析，实际 %v calls=%d", c, calls)
+	}
+}
+
 // 行为：TTL 内不重复解析（每拍探测都打 DNS 既慢又吵）。
 func TestPortalTargetCacheTTL(t *testing.T) {
 	calls := 0

@@ -57,7 +57,8 @@ func (p *plumbing) chooseRoute(bound, system *netstack.Client) portalRoute {
 			client: system, path: routeSystem, why: "net_mode=system 手动强制",
 		})
 	}
-	ip, err := p.pt.lookup()
+	src := bound.Source()
+	ip, err := p.pt.lookupForSource(src)
 	if errors.Is(err, netstack.ErrInterfaceBind) {
 		err = errSourceUnbindable
 	}
@@ -65,10 +66,12 @@ func (p *plumbing) chooseRoute(bound, system *netstack.Client) portalRoute {
 		// 2026-11-23 过夜缺陷：DNS 结果在 TTL 缓存里命中，但 wlan0 的 IP 已被
 		// Doze 从内核网卡摘掉——dialer 的 LocalAddr 绑不上，5 小时 13 拍全卡在
 		// 「正在重选」。解析成功不等于绑源可用：自检一次源是否仍可绑定。
-		if p.bindable == nil || p.bindable(bound.Source()) {
+		bindOK := p.bindable == nil || p.bindable(src)
+		p.noteBind(bound.BindingInfo())
+		if bindOK {
 			pin := net.JoinHostPort(ip.String(), p.portalPort)
 			return p.noteRoute(portalRoute{
-				client: bound, pin: pin, path: routeBound,
+				client: bound.CloneForSource(src), pin: pin, path: routeBound,
 				why: "绑源解析成功（钉 " + pin + "）",
 			})
 		}
@@ -137,7 +140,7 @@ func (p *plumbing) routeText() string {
 		text += "（" + p.lastWhy + "）"
 	}
 	if p.lastRoute == routeBound && p.portal != nil {
-		info := p.portal.BindingInfo()
+		info := p.bindingInfo()
 		switch info.Mode {
 		case "interface":
 			text += fmt.Sprintf("｜接口绑定 %s(#%d)", info.Interface, info.Index)

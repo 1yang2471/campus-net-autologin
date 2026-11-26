@@ -5,50 +5,147 @@
     {
       "fork": "Windows 绕过 TUN 的实现层",
       "options": [
-        { "label": "socket 接口级绑定", "target": { "file": "go-cnal/internal/netstack/client.go", "symbol": "dialer" } },
-        { "label": "修改系统路由或 metric", "target": { "file": "go-cnal/internal/app/portalroute.go", "symbol": "chooseRoute" } },
-        { "label": "WFP 驱动或独立 Helper", "target": { "file": "go-cnal/scripts/install.ps1" } }
+        {
+          "label": "socket 接口级绑定",
+          "target": {
+            "file": "go-cnal/internal/netstack/client.go",
+            "symbol": "dialer"
+          }
+        },
+        {
+          "label": "修改系统路由或 metric",
+          "target": {
+            "file": "go-cnal/internal/app/portalroute.go",
+            "symbol": "chooseRoute"
+          }
+        },
+        {
+          "label": "WFP 驱动或独立 Helper",
+          "target": {
+            "file": "go-cnal/scripts/install.ps1"
+          }
+        }
       ],
       "picked": "socket 接口级绑定",
-      "evidence": { "kind": "repo", "ref": "go-cnal/internal/netstack/client.go:221", "asserts": ["物理栈", "LocalAddr"] },
-      "target": { "file": "go-cnal/internal/netstack/client.go", "symbol": "dialer" },
+      "evidence": {
+        "kind": "repo",
+        "ref": "go-cnal/internal/netstack/client.go:228",
+        "asserts": [
+          "物理栈",
+          "LocalAddr"
+        ]
+      },
+      "target": {
+        "file": "go-cnal/internal/netstack/client.go",
+        "symbol": "dialer"
+      },
       "cost_if_wrong": "high",
       "verified": true
     },
     {
       "fork": "接口绑定失败时的默认策略",
       "options": [
-        { "label": "默认严格且可配置降级", "target": { "file": "go-cnal/internal/app/portalroute.go", "symbol": "chooseRoute" } },
-        { "label": "保持 auto 自动回退系统栈", "target": { "file": "go-cnal/internal/app/portalroute.go", "symbol": "chooseRoute" } },
-        { "label": "永久严格且不提供降级", "target": { "file": "go-cnal/internal/app/portalroute.go", "symbol": "chooseRoute" } }
+        {
+          "label": "默认严格且可配置降级",
+          "target": {
+            "file": "go-cnal/internal/app/portalroute.go",
+            "symbol": "chooseRoute"
+          }
+        },
+        {
+          "label": "保持 auto 自动回退系统栈",
+          "target": {
+            "file": "go-cnal/internal/app/portalroute.go",
+            "symbol": "chooseRoute"
+          }
+        },
+        {
+          "label": "永久严格且不提供降级",
+          "target": {
+            "file": "go-cnal/internal/app/portalroute.go",
+            "symbol": "chooseRoute"
+          }
+        }
       ],
       "picked": "默认严格且可配置降级",
-      "evidence": { "kind": "memory", "ref": "log#1", "asserts": ["默认严格", "降级开关", "TUN"] },
-      "target": { "file": "go-cnal/internal/app/portalroute.go", "symbol": "chooseRoute" },
+      "evidence": {
+        "kind": "memory",
+        "ref": "log#1",
+        "asserts": [
+          "默认严格",
+          "降级开关",
+          "TUN"
+        ]
+      },
+      "target": {
+        "file": "go-cnal/internal/app/portalroute.go",
+        "symbol": "chooseRoute"
+      },
       "cost_if_wrong": "high",
       "verified": true
     },
     {
       "fork": "Clash fake-ip 联动",
       "options": [
-        { "label": "实现仅本机回环的 flush API", "target": { "file": "go-cnal/internal/app/compose_portal.go", "symbol": "newPlumbing" } },
-        { "label": "删除文档中的未实现承诺", "target": { "file": "README.md" } }
+        {
+          "label": "实现仅本机回环的 flush API",
+          "target": {
+            "file": "go-cnal/internal/app/compose_portal.go",
+            "symbol": "newPlumbing"
+          }
+        },
+        {
+          "label": "删除文档中的未实现承诺",
+          "target": {
+            "file": "README.md"
+          }
+        }
       ],
       "picked": "实现仅本机回环的 flush API",
-      "evidence": { "kind": "memory", "ref": "log#2", "asserts": ["本机回环", "flush API", "不阻断认证"] },
-      "target": { "file": "go-cnal/internal/app/compose_portal.go", "symbol": "newPlumbing" },
+      "evidence": {
+        "kind": "memory",
+        "ref": "log#2",
+        "asserts": [
+          "本机回环",
+          "flush API",
+          "不阻断认证"
+        ]
+      },
+      "target": {
+        "file": "go-cnal/internal/app/compose_portal.go",
+        "symbol": "newPlumbing"
+      },
       "cost_if_wrong": "high",
       "verified": true
     },
     {
       "fork": "本次 Windows 修复的发布版本号",
       "options": [
-        { "label": "v2.4.2-go", "target": { "file": "go-cnal/scripts/build.ps1" } },
-        { "label": "v2.5.0-go", "target": { "file": "go-cnal/scripts/build.ps1" } }
+        {
+          "label": "v2.4.2-go",
+          "target": {
+            "file": "go-cnal/scripts/build.ps1"
+          }
+        },
+        {
+          "label": "v2.5.0-go",
+          "target": {
+            "file": "go-cnal/scripts/build.ps1"
+          }
+        }
       ],
       "picked": "v2.4.2-go",
-      "evidence": { "kind": "memory", "ref": "log#3", "asserts": ["v2.4.2-go", "不发布 Android"] },
-      "target": { "file": "go-cnal/scripts/build.ps1" },
+      "evidence": {
+        "kind": "memory",
+        "ref": "log#3",
+        "asserts": [
+          "v2.4.2-go",
+          "不发布 Android"
+        ]
+      },
+      "target": {
+        "file": "go-cnal/scripts/build.ps1"
+      },
       "cost_if_wrong": "high",
       "verified": true
     }

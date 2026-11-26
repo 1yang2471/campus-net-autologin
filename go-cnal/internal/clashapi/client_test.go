@@ -13,6 +13,7 @@ func TestRejectsNonLoopbackController(t *testing.T) {
 		"https://127.0.0.1:9090",
 		"http://user@127.0.0.1:9090",
 		"http://127.0.0.1:9090/?x=1",
+		"http://127.0.0.1:9090/foo",
 		"ftp://127.0.0.1:9090",
 	} {
 		if _, err := New(raw, ""); err == nil {
@@ -42,6 +43,29 @@ func TestFlushFakeIPUsesMihomoEndpointAndBearer(t *testing.T) {
 	}
 	if method != http.MethodPost || path != "/cache/fakeip/flush" || auth != "Bearer secret" {
 		t.Fatalf("请求形状错误: %s %s %s", method, path, auth)
+	}
+}
+
+func TestFlushFakeIPDoesNotFollowRedirect(t *testing.T) {
+	targetHits := 0
+	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		targetHits++
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer target.Close()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, target.URL, http.StatusFound)
+	}))
+	defer srv.Close()
+	c, err := New(srv.URL, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := c.FlushFakeIP(context.Background()); err == nil {
+		t.Fatal("重定向必须按非成功处理")
+	}
+	if targetHits != 0 {
+		t.Fatalf("不得跟随控制器重定向，实际命中 %d 次", targetHits)
 	}
 }
 

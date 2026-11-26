@@ -34,7 +34,8 @@ Windows 用户级安装，不需要管理员权限。
 设置面板收集账号密码；也可先跑 `cnal detect --write` 看探测结果）。
 密码只存 Windows 凭据管理器，ini 里 `password = <keyring>` 是占位符。
 
-`campus_dns` 强烈建议填 IP 字面量（门户钉 IP 与物理源选路都靠它）；v2.4.2 的
+`campus_dns` 建议填 IP 字面量；Windows 留空时会从所选物理网卡自动读取 DNS，取不到
+则严格模式明确报错，不偷回系统 DNS。v2.4.2 的
 严格接口模式不会用系统 DNS 冒充绑源解析。`strict_interface_bind=true` 为
 Windows 默认，绑定失败即 fail-closed；`false` 才降级为仅绑源 IP。面板常用区管
 6 项，高级折叠区管网络参数与 `[response]` 词表；严格模式、`net_mode` 与

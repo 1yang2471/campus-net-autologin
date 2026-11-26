@@ -56,12 +56,6 @@ func (c *Client) SetSource(ip net.IP) {
 	c.mu.Unlock()
 }
 
-func (c *Client) SetBindMode(mode BindMode) {
-	c.mu.Lock()
-	c.bindMode = mode
-	c.mu.Unlock()
-}
-
 func (c *Client) noteBind(info BindingInfo) {
 	c.bindMu.Lock()
 	c.lastBind = info
@@ -84,6 +78,19 @@ func (c *Client) source() net.IP {
 // Source 导出的当前绑定源（面板 IPv4 行显示实际物理源——TUN/代理环境下
 // 「从哪张网卡出去」是用户最该看到的事实；重发现改绑后读数同步变）。
 func (c *Client) Source() net.IP { return c.source() }
+
+// CloneForSource 为一次操作创建源快照，避免换网改绑与 DNS pin 并发错配。
+func (c *Client) CloneForSource(src net.IP) *Client {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return &Client{
+		src:      append(net.IP(nil), src...),
+		system:   c.system,
+		perTry:   c.perTry,
+		insecure: c.insecure,
+		bindMode: c.bindMode,
+	}
+}
 
 // Bindable 自检指定源 IP（src 为 nil 时用 client 当前源）是否仍可绑定
 // （2026-11-23 过夜缺陷：MIUI Doze 把 wlan0 的 IP 从内核网卡摘掉，DNS 结果

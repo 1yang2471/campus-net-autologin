@@ -13,8 +13,21 @@ func TestClientReportsInterfaceBinding(t *testing.T) {
 		t.Fatalf("回环接口应可绑，实际 %+v", c.BindingInfo())
 	}
 	info := c.BindingInfo()
-	if info.Mode != "interface" || info.Index <= 0 {
-		t.Fatalf("应报告真实接口绑定，实际 %+v", info)
+	if DefaultBindMode() == BindModeInterface {
+		if info.Mode != "interface" || info.Index <= 0 {
+			t.Fatalf("应报告真实接口绑定，实际 %+v", info)
+		}
+	} else if info.Mode != "source_only" {
+		t.Fatalf("非 Windows 应保持 source_only，实际 %+v", info)
+	}
+}
+
+func TestCloneForSourceKeepsOperationSnapshot(t *testing.T) {
+	c := New(net.ParseIP("127.0.0.1"), time.Second)
+	snapshot := c.CloneForSource(net.ParseIP("192.0.2.10"))
+	c.SetSource(net.ParseIP("127.0.0.2"))
+	if !snapshot.Source().Equal(net.ParseIP("192.0.2.10")) {
+		t.Fatalf("操作快照不得随共享客户端改绑，实际 %v", snapshot.Source())
 	}
 }
 

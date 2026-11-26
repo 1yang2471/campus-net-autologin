@@ -30,7 +30,7 @@
 
 1. 使用 Windows `IP_UNICAST_IF` 与 `IPV6_UNICAST_IF`，在 socket connect/bind 前设置接口。
 2. 每次拨号按源 IP 重新解析接口，不缓存接口索引，适配同 IP 重连和网卡重建。
-3. `strict_interface_bind = true` 为 Windows 默认值；关闭后允许旧式仅绑源 IP 的降级路径。
+3. `strict_interface_bind = true` 为 Windows 默认值；关闭后直接使用仅绑源 IP 的 `source_only` 模式，不再保留“先试接口、失败再降级”的歧义。
 4. `net_mode=system` 仍是显式专家覆盖；严格策略只阻止 `auto` 的自动回退，不覆盖用户显式选择。
 5. 严格模式下，门户解析与凭据路径不得通过系统 DNS 或系统栈偷偷回退；L2 的系统解析仅作为诊断对照。
 6. Clash API 只接受本机回环 HTTP 地址，只调用 `POST /cache/fakeip/flush`，不调用会断开全部连接的接口。
@@ -52,6 +52,8 @@
 - IPv4 使用接口 `IfIndex`；IPv6 使用 `Ipv6IfIndex`，为零时回退 `IfIndex`。
 - 不按接口名猜测，不按默认路由猜测，不取第一个匹配。
 - 源发现仍按现有“门户可达性”行为选源，不改成仅按网卡结构选择。
+- 每次拨号重新解析接口，不缓存索引，适配同 IP 重连和网卡重建。
+- 一次门户操作使用“源 IP + DNS pin + Client”的不可变快照；门户 DNS 缓存按源 IP 分键，换网并发时不得把旧 pin 发给新源。
 
 ### 4.2 Windows 平台实现
 
@@ -94,20 +96,21 @@ IPv4 字节序以 WireGuard 的 Windows 实现为参照：`binary.BigEndian` 写
 
 ### 4.5 DNS 边界
 
-- 严格模式下，门户目标解析只接受 `ResolveBound` 成功；校园 DNS 必须是 IP 字面量。
+- 严格模式下，门户解析只接受 `ResolveBound` 成功；校园 DNS 必须是 IP 字面量。`campus_dns` 留空时从所选物理接口读取同族 DNS，取不到则明确失败。
 - 不得用系统 DNS 的 fake-ip 作为严格模式凭据路径的 pin。
 - L2 诊断可保留系统解析对照，但 TLS 拨号仍走物理接口。
-- 非严格模式保留现有回退，并在状态中可观察。
+- 非严格模式直接使用 `source_only`，不尝试接口绑定，并在状态与启动日志中标记降级。
 
 ### 4.6 Clash/Mihomo API
 
 新增有界模块，职责仅为 flush fake-ip：
 
 - 配置：`clash_api_url`、`clash_api_secret`。
-- URL 仅允许 `http`、本机回环主机、无用户信息、无查询串和 fragment。
+- URL 仅允许 `http`、本机回环主机、无用户信息、无查询串和 fragment、无子路径。
 - 请求：`POST /cache/fakeip/flush`，可选 `Authorization: Bearer`。
+- 拒绝跟随重定向，避免从本机控制器跳转到非回环地址。
 - 超时 2 秒；Transport 显式禁用代理环境变量。
-- 仅在登录或恢复成功后触发；失败写告警，不改变认证结果。
+- 仅在登录或恢复成功后触发；配置非法时告警并禁用联动，不阻断认证；HTTP 调用异步执行并合并 pending 请求，失败只告警，不改变认证结果。
 - 不记录 secret，不读取订阅内容，不调用 `/connections`。
 
 ### 4.7 可观测性

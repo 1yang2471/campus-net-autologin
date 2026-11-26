@@ -63,7 +63,7 @@ func newAPI(cfg *daemonConfig, p *plumbing, d *keeper.Daemon) *api.Server {
 				"multi_channel":  d.MultiChannelOn()},
 		}
 		if p.portal != nil {
-			info := p.portal.BindingInfo()
+			info := p.bindingInfo()
 			snap.BindMode = info.Mode
 			snap.BindInterface = info.Interface
 			snap.BindIndex = info.Index

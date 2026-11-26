@@ -91,8 +91,11 @@ func formatStatus(s api.Snapshot) string {
 	}
 	fmt.Fprintf(&b, "v4 源: %s\n", orUnknown(s.V4Src))
 	fmt.Fprintf(&b, "v6 源: %s\n", orUnknown(s.V6Src))
-	if s.BindMode != "" {
+	if s.BindMode != "" || s.BindInterface != "" || s.BindIndex > 0 || s.BindDegraded || s.BindError != "" {
 		desc := s.BindMode
+		if desc == "" {
+			desc = "unknown"
+		}
 		if s.BindInterface != "" {
 			desc += " " + s.BindInterface
 			if s.BindIndex > 0 {

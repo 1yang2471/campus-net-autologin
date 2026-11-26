@@ -25,37 +25,66 @@ func ResolveBound(src net.IP, dnsServer, host string, timeout time.Duration) (ne
 }
 
 func ResolveBoundWithBindMode(src net.IP, dnsServer, host string, timeout time.Duration, mode BindMode) (net.IP, error) {
+	ip, _, err := ResolveBoundWithInfo(src, dnsServer, host, timeout, mode)
+	return ip, err
+}
+
+func ResolveBoundWithInfo(src net.IP, dnsServer, host string, timeout time.Duration, mode BindMode) (net.IP, BindingInfo, error) {
 	if src == nil {
-		return nil, errors.New("未绑定源地址：物理栈纪律不允许")
+		return nil, BindingInfo{}, errors.New("未绑定源地址：物理栈纪律不允许")
+	}
+	if strings.TrimSpace(dnsServer) == "" && mode == BindModeInterface {
+		var err error
+		dnsServer, err = interfaceDNSDiscoverer(src)
+		if err != nil {
+			return nil, BindingInfo{Err: err}, fmt.Errorf("未配置 campus_dns，且无法从物理接口获取 DNS: %w", err)
+		}
 	}
 	dnsServer = normalizeDNSServer(dnsServer)
 	if mode == BindModeInterface {
 		dnsHost, _, err := net.SplitHostPort(dnsServer)
-		if err != nil || net.ParseIP(dnsHost) == nil {
-			return nil, fmt.Errorf("%w: 严格模式 campus_dns 必须是 IP 字面量", ErrInterfaceBind)
+		dnsIP := net.ParseIP(dnsHost)
+		if err != nil || dnsIP == nil {
+			err = fmt.Errorf("%w: 严格模式 campus_dns 必须是 IP 字面量", ErrInterfaceBind)
+			return nil, BindingInfo{Err: err}, err
+		}
+		if (src.To4() != nil) != (dnsIP.To4() != nil) {
+			err = fmt.Errorf("%w: campus_dns 与源 IP 地址族不一致", ErrInterfaceBind)
+			return nil, BindingInfo{Err: err}, err
 		}
 	}
 	network := "udp4"
+	lookupNetwork := "ip4"
 	if src.To4() == nil {
 		network = "udp6"
+		lookupNetwork = "ip6"
 	}
-	d, _, err := makeDialer(src, network, timeout, mode)
+	d, info, err := makeDialer(src, network, timeout, mode)
 	if err != nil {
-		return nil, fmt.Errorf("绑源 DNS 拨号失败: %w", err)
+		info.Err = err
+		return nil, info, fmt.Errorf("绑源 DNS 拨号失败: %w", err)
 	}
 	res := &net.Resolver{
 		PreferGo: true,
-		Dial: func(ctx context.Context, _, _ string) (net.Conn, error) {
-			return d.DialContext(ctx, network, dnsServer)
+		Dial: func(ctx context.Context, callbackNetwork, _ string) (net.Conn, error) {
+			if strings.HasPrefix(callbackNetwork, "tcp") {
+				tcpDialer, _, err := makeDialer(src, "tcp", timeout, mode)
+				if err != nil {
+					return nil, err
+				}
+				return tcpDialer.DialContext(ctx, callbackNetwork, dnsServer)
+			}
+			return d.DialContext(ctx, callbackNetwork, dnsServer)
 		},
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
-	ips, err := res.LookupIP(ctx, "ip", host)
+	ips, err := res.LookupIP(ctx, lookupNetwork, host)
 	if err != nil {
-		return nil, err
+		return nil, info, err
 	}
-	return pickPortalIP(ips)
+	ip, err := pickPortalIP(ips)
+	return ip, info, err
 }
 
 // pickPortalIP 从 DNS 应答里挑一个可用地址：**v4 优先**，没有 v4 才回退 v6。
