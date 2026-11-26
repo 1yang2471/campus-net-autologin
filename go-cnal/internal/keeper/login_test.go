@@ -210,6 +210,32 @@ func TestDoRebindRejectedMessageSinglePrefix(t *testing.T) {
 		t.Fatal("门户拒绝必须报错")
 	}
 	if !strings.Contains(err.Error(), "门户未受理补绑") || strings.Contains(err.Error(), "登录未受理") {
-		t.Errorf("错误文案应只带补绑前缀 + 门户原文，实际 %q", err)
+		t.Errorf("错误文案应只带补绑前缀 + 门户原文，实际 %q", err.Error())
+	}
+}
+
+func TestLoginAfterSuccessRunsOnlyOnAccepted(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		resp string
+		err  error
+		want int
+	}{
+		{name: "accepted", resp: "{'success':true, 'msg':'ok'}", want: 1},
+		{name: "rejected", resp: "{'success':false, 'msg':'认证失败'}", want: 0},
+		{name: "delivery error", err: errors.New("network down"), want: 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			calls := 0
+			a := &LoginAction{
+				User: "u", Pass: "p",
+				Deliver:      func(map[string]string) (string, error) { return tc.resp, tc.err },
+				AfterSuccess: func() { calls++ },
+			}
+			_, _ = a.Do()
+			if calls != tc.want {
+				t.Fatalf("成功回调次数错误，实际 %d 期望 %d", calls, tc.want)
+			}
+		})
 	}
 }

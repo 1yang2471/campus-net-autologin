@@ -72,6 +72,17 @@ func TestConfigStrictInterfaceBindDefaultAndOverride(t *testing.T) {
 	}
 }
 
+func TestConfigClashAPI(t *testing.T) {
+	base := "[keeper]\nserver = https://x\nlogin_path = /a\n"
+	c, err := loadDaemonConfig(writeTmpIni(t, base+"clash_api_url = http://127.0.0.1:9090\nclash_api_secret = token\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.ClashAPIURL != "http://127.0.0.1:9090" || c.ClashAPISecret != "token" {
+		t.Fatalf("Clash API 配置读取错误，实际 %q %q", c.ClashAPIURL, c.ClashAPISecret)
+	}
+}
+
 func TestConfigAutoReconnectOffAndBindIP(t *testing.T) {
 	c, err := loadDaemonConfig(writeTmpIni(t, "[keeper]\nserver = https://x\nlogin_path = /a\nauto_reconnect = false\nbind_ip = 172.29.1.5\n"))
 	if err != nil {

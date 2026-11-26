@@ -1,6 +1,7 @@
 package app
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net"
@@ -8,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"cnal/internal/clashapi"
 	"cnal/internal/keeper"
 	"cnal/internal/netstack"
 	"cnal/internal/protocol"
@@ -36,6 +38,7 @@ type plumbing struct {
 	// 在接口/绑源失败时回退系统栈。Windows 生产默认严格。
 	bindMode            netstack.BindMode
 	strictInterfaceBind bool
+	clash               *clashapi.Client
 	// logf 路径日志缝（默认 stdout，安卓注入状态日志）：只在路径变化时调用。
 	logf func(format string, args ...any)
 	// routeMu/lastRoute/lastWhy 路径日志去重（Tick 与回路 API goroutine 并发选路）。
@@ -79,6 +82,10 @@ func newPlumbing(cfg daemonConfig, user, pass string) (*plumbing, error) {
 	u, err := url.Parse(cfg.Server)
 	if err != nil {
 		return nil, fmt.Errorf("server 非法 URL: %w", err)
+	}
+	clash, err := clashapi.New(cfg.ClashAPIURL, cfg.ClashAPISecret)
+	if err != nil {
+		return nil, fmt.Errorf("Clash API 配置错误: %w", err)
 	}
 	portalHost := u.Hostname()
 	portalPort := u.Port()
@@ -217,7 +224,7 @@ func newPlumbing(cfg daemonConfig, user, pass string) (*plumbing, error) {
 		portal: portal, systemPortal: systemPortal,
 		probe: probe, systemProbe: systemProbe,
 		login: loginClient, systemLogin: systemLogin,
-		netMode: cfg.NetMode, bindMode: bindMode, strictInterfaceBind: strictBind, logf: printSource,
+		netMode: cfg.NetMode, bindMode: bindMode, strictInterfaceBind: strictBind, clash: clash, logf: printSource,
 		currentV4: currentV4, setV4: setV4, currentV6: currentV6, handshakeOnce: handshakeOnce,
 		// 绑源自检：DNS 缓存命中但网卡 IP 被摘掉时（2026-11-23 过夜缺陷），
 		// chooseRoute 据此判绑源是否仍可用，失效则清缓存+转系统栈。
@@ -231,6 +238,7 @@ func newPlumbing(cfg daemonConfig, user, pass string) (*plumbing, error) {
 		Deliver: func(form map[string]string) (string, error) {
 			return deliverPinned(cfg, p, form)
 		},
+		AfterSuccess: p.flushClash,
 	}
 
 	// 物理源重发现：portal_down 拍按 portal_down_wait 节流重选源，变了才改绑
@@ -262,6 +270,19 @@ func newPlumbing(cfg daemonConfig, user, pass string) (*plumbing, error) {
 		p.sourceStale = NotifySourceStale
 	}
 	return p, nil
+}
+
+func (p *plumbing) flushClash() {
+	if p.clash == nil {
+		return
+	}
+	if err := p.clash.FlushFakeIP(context.Background()); err != nil {
+		msg := fmt.Sprintf("Clash fake-ip flush 失败（不影响认证）: %v", err)
+		if p.logf != nil {
+			p.logf("%s\n", msg)
+		}
+		_ = AppendEvent(LogFilePath(), EventClock(), msg)
+	}
 }
 
 // applyV4 把新物理 v4 源同步到所有消费点：共享快照（DNS 解析/L2/v4 显示）

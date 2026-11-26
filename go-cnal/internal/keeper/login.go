@@ -32,6 +32,8 @@ type LoginAction struct {
 	Handshake func() (string, error)
 	// Deliver 物理栈钉 IP 发登录表单，返回门户响应原文（守护主线唯一凭据出口）。
 	Deliver func(form map[string]string) (string, error)
+	// AfterSuccess 登录/补绑被门户接受后的非阻断后置动作；失败不得改变认证结果。
+	AfterSuccess func()
 }
 
 // Relocate 热切换账号（面板切换立即生效，不重启进程）：原子换凭据，下一次
@@ -51,6 +53,12 @@ func (a *LoginAction) credentials() (string, string) {
 	a.credMu.RLock()
 	defer a.credMu.RUnlock()
 	return a.User, a.Pass
+}
+
+func (a *LoginAction) notifySuccess() {
+	if a.AfterSuccess != nil {
+		a.AfterSuccess()
+	}
 }
 
 // peerValue 现场握手取对端 v6 地址（Do 与 DoRebind 共用——同一条规矩只放一处）。
@@ -125,6 +133,9 @@ func (a *LoginAction) DoVia(deliver func(form map[string]string) (string, error)
 		return Outcome{V6: bind}, err
 	}
 	judged, jerr := JudgeLoginResponse(resp, a.Marks.withDefaults())
+	if jerr == nil {
+		a.notifySuccess()
+	}
 	return Outcome{Resp: judged, V6: bind}, jerr
 }
 
@@ -144,6 +155,9 @@ func (a *LoginAction) DoBind(v6 string) (Outcome, error) {
 		return Outcome{V6: V6Sent}, err
 	}
 	judged, jerr := JudgeLoginResponse(resp, a.Marks.withDefaults())
+	if jerr == nil {
+		a.notifySuccess()
+	}
 	return Outcome{Resp: judged, V6: V6Sent}, jerr
 }
 
@@ -172,5 +186,6 @@ func (a *LoginAction) DoRebind() error {
 		// 面板/托盘直接显示这句，门户原文才是用户要的失败原因。
 		return fmt.Errorf("门户未受理补绑: %s", strings.TrimSpace(resp))
 	}
+	a.notifySuccess()
 	return nil
 }

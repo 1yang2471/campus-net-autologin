@@ -69,6 +69,9 @@ type daemonConfig struct {
 	// StrictInterfaceBind Windows 默认严格：接口绑定失败时不转系统栈、
 	// 不发凭据；显式 false 时允许降级为仅绑源 IP。非 Windows 不生效。
 	StrictInterfaceBind bool
+
+	ClashAPIURL    string // 仅本机回环的 Mihomo 外部控制器
+	ClashAPISecret string // 控制器密钥；空 = 无鉴权
 }
 
 // loadDaemonConfig 读守护 ini：[keeper]/[portal] 扁平扫描 key = value，
@@ -221,6 +224,10 @@ func loadDaemonConfig(path string) (daemonConfig, error) {
 				return daemonConfig{}, err
 			}
 			c.StrictInterfaceBind = b
+		case "clash_api_url":
+			c.ClashAPIURL = strings.TrimSpace(v)
+		case "clash_api_secret":
+			c.ClashAPISecret = v
 		case "user_agent":
 			c.UserAgent = v
 		case "login_timeout":
